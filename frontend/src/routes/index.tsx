@@ -5,6 +5,7 @@ import type { ChatMessage, Conflict, Graph, Health, Memory, Resolution, Session 
 import { Workspace } from "@/components/chat/Workspace";
 import { GraphExplorer } from "@/components/graph/GraphExplorer";
 import { ConflictPanel } from "@/components/conflicts/ConflictPanel";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Plus, Menu, PanelRight, Maximize2, Minimize2, RotateCcw, Database, X, Search } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -81,17 +82,17 @@ function App() {
   const retrievedIds = new Set(messages.flatMap((m) => m.retrieved_memory_ids ?? m.evidence?.map((e) => e.memory_id) ?? []));
   const priorMem = memories.filter((m) => retrievedIds.has(m.id) && m.session_id !== active);
 
-  const sidebar = (
-    <aside className="flex h-full w-64 flex-col border-r border-border bg-surface">
-      <div className="flex items-center justify-between px-5 pb-4 pt-5">
+  const sidebarContent = (
+    <div className="flex h-full w-full flex-col bg-surface overflow-hidden">
+      <div className="flex items-center justify-between px-5 pb-4 pt-5 shrink-0">
         <div className="font-display text-2xl tracking-tight">Agent<em className="text-primary">Mesh</em></div>
         <button className="md:hidden" onClick={() => setLeftOpen(false)} aria-label="Close"><X className="size-4" /></button>
       </div>
-      <div className="px-3">
+      <div className="px-3 shrink-0">
         <select className="w-full rounded-md border border-input bg-card px-2.5 py-1.5 text-sm outline-none" aria-label="Project"><option>Q3 Launch · sample</option></select>
         <button onClick={newSession} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"><Plus className="size-4" />New session</button>
       </div>
-      <div className="mt-6 px-5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Recent sessions</div>
+      <div className="mt-6 px-5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground shrink-0">Recent sessions</div>
       <nav className="mt-2 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2">
         {sessions.length === 0 && <p className="px-3 text-xs text-muted-foreground">No sessions yet.</p>}
         {sessions.map((s) => (
@@ -101,18 +102,18 @@ function App() {
           </button>
         ))}
       </nav>
-      <div className="space-y-2 border-t border-border p-4 font-mono text-[10px]">
+      <div className="space-y-2 border-t border-border p-4 font-mono text-[10px] shrink-0">
         <div className="flex items-center gap-2">
           <span className={`size-1.5 rounded-full ${health?.status === "ok" ? "bg-success" : health ? "bg-destructive" : "pulse-dot bg-muted-foreground"}`} />
           API {health?.status ?? "checking"} · DB {health ? (health.database ? "connected" : "offline") : "…"}
         </div>
         {isDemo && <div className="flex items-center justify-between text-primary">DEMO DATA · local only<button onClick={reset} className="flex items-center gap-1 hover:underline"><RotateCcw className="size-3" />reset</button></div>}
       </div>
-    </aside>
+    </div>
   );
 
-  const context = (
-    <aside className="flex h-full w-full flex-col overflow-y-auto border-l border-border bg-surface md:w-[340px]">
+  const contextContent = (
+    <div className="flex h-full w-full flex-col overflow-y-auto bg-surface">
       <div className="flex items-center justify-between px-5 pt-5 md:hidden"><span className="font-display text-xl">Context</span><button onClick={() => setRightOpen(false)} aria-label="Close"><X className="size-4" /></button></div>
       <section className="p-5">
         <h2 className="mb-3 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Conflicts {openConflicts > 0 && <span className="rounded-full bg-destructive px-1.5 text-destructive-foreground">{openConflicts}</span>}</h2>
@@ -142,48 +143,96 @@ function App() {
           ))}
         </div>
       </section>
-    </aside>
+    </div>
   );
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <div className="hidden md:block">{sidebar}</div>
-      {leftOpen && <div className="fixed inset-0 z-40 flex bg-background/70 md:hidden" onClick={() => setLeftOpen(false)}><div onClick={(e) => e.stopPropagation()}>{sidebar}</div></div>}
-
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-border px-4 py-2.5">
-          <button className="md:hidden" onClick={() => setLeftOpen(true)} aria-label="Menu"><Menu className="size-5" /></button>
-          <h1 className="truncate text-sm font-medium">{sessions.find((s) => s.id === active)?.title ?? "New workspace"}</h1>
-          {lastWrite && <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 font-mono text-[10px] text-success"><Database className="size-3" />memory saved {new Date(lastWrite).toLocaleTimeString()}</span>}
-          <button className="ml-auto lg:hidden relative" onClick={() => setRightOpen(true)} aria-label="Context"><PanelRight className="size-5" />{openConflicts > 0 && <span className="absolute -right-1 -top-1 size-2 rounded-full bg-destructive" />}</button>
-        </header>
-        {error && <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">{error}</div>}
-
-        <div className={`min-h-0 ${graphBig ? "hidden" : "flex-1"}`}>
-          <Workspace messages={messages} sending={sending} onSend={send} onEvidence={(ids) => setHighlight(new Set(ids))} />
-        </div>
-
-        <div className={`flex flex-col border-t border-border ${graphBig ? "min-h-0 flex-1" : ""}`}>
-          <div className="flex items-center gap-3 px-4 py-2">
-            <span className="font-display text-lg italic">Knowledge graph</span>
-            <span className="font-mono text-[10px] text-muted-foreground">{graph.nodes.length} nodes · {graph.edges.length} edges</span>
-            <div className="ml-auto flex items-center gap-2">
-              <select value={graphScope} onChange={(e) => setGraphScope(e.target.value as "all" | "session")} className="rounded border border-input bg-card px-1.5 py-0.5 text-xs outline-none" aria-label="Session filter">
-                <option value="all">All sessions</option><option value="session">This session</option>
-              </select>
-              {highlight.size > 0 && <button onClick={() => setHighlight(new Set())} className="text-xs text-muted-foreground hover:text-foreground">clear highlight</button>}
-              <button onClick={() => setGraphBig((b) => !b)} aria-label="Toggle graph size">{graphBig ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}</button>
-            </div>
-          </div>
-          <div className={graphBig ? "min-h-0 flex-1" : ""}>
-            {graphErr ? <div className="flex h-72 items-center justify-center text-sm text-destructive">Graph failed to load: {graphErr}</div>
-              : <GraphExplorer graph={graph} highlight={highlight} selectedId={selected} onSelect={setSelected} large={graphBig} />}
+    <div className="flex h-screen w-screen overflow-hidden bg-background">
+      {/* Mobile Drawer: Left Sidebar */}
+      {leftOpen && (
+        <div className="fixed inset-0 z-40 flex bg-background/70 md:hidden" onClick={() => setLeftOpen(false)}>
+          <div className="w-72 h-full border-r border-border shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            {sidebarContent}
           </div>
         </div>
-      </main>
+      )}
 
-      <div className="hidden lg:block">{context}</div>
-      {rightOpen && <div className="fixed inset-0 z-40 flex justify-end bg-background/70 lg:hidden" onClick={() => setRightOpen(false)}><div className="w-[90vw] max-w-sm" onClick={(e) => e.stopPropagation()}>{context}</div></div>}
+      {/* Main VS Code-style 3-Column Resizable Layout */}
+      <ResizablePanelGroup orientation="horizontal" className="h-full w-full">
+        {/* Left Sidebar Panel (Resizable like VS Code Explorer) */}
+        <ResizablePanel defaultSize="18%" minSize="12%" maxSize="32%" id="left-sidebar" className="hidden md:block">
+          {sidebarContent}
+        </ResizablePanel>
+
+        <ResizableHandle withHandle className="hidden md:flex" />
+
+        {/* Center Panel (Top Chat + Bottom Knowledge Graph) */}
+        <ResizablePanel defaultSize="58%" minSize="35%" id="center-main">
+          <main className="flex h-full w-full flex-col min-w-0 overflow-hidden">
+            <header className="flex items-center gap-3 border-b border-border px-4 py-2.5 shrink-0 bg-surface/50">
+              <button className="md:hidden" onClick={() => setLeftOpen(true)} aria-label="Menu"><Menu className="size-5" /></button>
+              <h1 className="truncate text-sm font-medium">{sessions.find((s) => s.id === active)?.title ?? "New workspace"}</h1>
+              {lastWrite && <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 font-mono text-[10px] text-success"><Database className="size-3" />memory saved {new Date(lastWrite).toLocaleTimeString()}</span>}
+              <button className="ml-auto lg:hidden relative" onClick={() => setRightOpen(true)} aria-label="Context"><PanelRight className="size-5" />{openConflicts > 0 && <span className="absolute -right-1 -top-1 size-2 rounded-full bg-destructive" />}</button>
+            </header>
+
+            {error && <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive shrink-0">{error}</div>}
+
+            {/* Nested Vertical Resizable Panel Group (Chat on Top, Graph on Bottom) */}
+            <ResizablePanelGroup orientation="vertical" className="flex-1 min-h-0">
+              {/* Top: Chat Workspace */}
+              <ResizablePanel defaultSize="52%" minSize="20%" id="chat-panel">
+                <div className="h-full w-full min-h-0 overflow-hidden">
+                  <Workspace messages={messages} sending={sending} onSend={send} onEvidence={(ids) => setHighlight(new Set(ids))} />
+                </div>
+              </ResizablePanel>
+
+              {/* Vertical Drag Handle (like VS Code Terminal/Panel Resize) */}
+              <ResizableHandle withHandle />
+
+              {/* Bottom: Knowledge Graph Explorer */}
+              <ResizablePanel defaultSize="48%" minSize="18%" id="graph-panel">
+                <div className="flex h-full w-full flex-col min-h-0 overflow-hidden bg-surface">
+                  <div className="flex items-center gap-3 px-4 py-2 shrink-0 border-b border-border/60 bg-surface/80">
+                    <span className="font-display text-lg italic">Knowledge graph</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">{graph.nodes.length} nodes · {graph.edges.length} edges</span>
+                    <div className="ml-auto flex items-center gap-2">
+                      <select value={graphScope} onChange={(e) => setGraphScope(e.target.value as "all" | "session")} className="rounded border border-input bg-card px-1.5 py-0.5 text-xs outline-none" aria-label="Session filter">
+                        <option value="all">All sessions</option><option value="session">This session</option>
+                      </select>
+                      {highlight.size > 0 && <button onClick={() => setHighlight(new Set())} className="text-xs text-muted-foreground hover:text-foreground">clear highlight</button>}
+                      <button onClick={() => setGraphBig((b) => !b)} aria-label="Toggle graph size">{graphBig ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}</button>
+                    </div>
+                  </div>
+                  <div className="flex-1 min-h-0 w-full overflow-hidden">
+                    {graphErr ? (
+                      <div className="flex h-full items-center justify-center text-sm text-destructive">Graph failed to load: {graphErr}</div>
+                    ) : (
+                      <GraphExplorer graph={graph} highlight={highlight} selectedId={selected} onSelect={setSelected} large={true} />
+                    )}
+                  </div>
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </main>
+        </ResizablePanel>
+
+        <ResizableHandle withHandle className="hidden lg:flex" />
+
+        {/* Right Context Panel (Conflicts & Memories) */}
+        <ResizablePanel defaultSize="24%" minSize="16%" maxSize="38%" id="right-context" className="hidden lg:block">
+          {contextContent}
+        </ResizablePanel>
+      </ResizablePanelGroup>
+
+      {/* Mobile Drawer: Right Context */}
+      {rightOpen && (
+        <div className="fixed inset-0 z-40 flex justify-end bg-background/70 lg:hidden" onClick={() => setRightOpen(false)}>
+          <div className="w-[90vw] max-w-sm h-full border-l border-border shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            {contextContent}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

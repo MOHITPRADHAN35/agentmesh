@@ -46,7 +46,7 @@ export function GraphExplorer({ graph, highlight, selectedId, onSelect, large }:
   const sel = graph.nodes.find((n) => n.id === selectedId);
 
   return (
-    <div className={`relative grain ${large ? "h-full" : "h-72"} w-full bg-surface`}>
+    <div className="relative grain h-full min-h-0 w-full bg-surface">
       <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-1.5">
         {TYPES.map((t) => (
           <button key={t} onClick={() => setHidden((h) => { const n = new Set(h); n.has(t) ? n.delete(t) : n.add(t); return n; })}
