@@ -3,6 +3,7 @@
 [![Hackathon Track](https://img.shields.io/badge/Track-Agent%20Memory%20%26%20Coordination-6366f1.svg?style=for-the-badge)](#-hackathon-tracks-entered)
 [![Secondary Track](https://img.shields.io/badge/Track-Company%20Brain-ec4899.svg?style=for-the-badge)](#-hackathon-tracks-entered)
 [![Graph Database](https://img.shields.io/badge/Database-FalkorDB%20(Latest)-dc2626.svg?style=for-the-badge)](https://github.com/FalkorDB/FalkorDB)
+[![Repository](https://img.shields.io/badge/GitHub-MOHITPRADHAN35%2Fagentmesh-181717.svg?style=for-the-badge&logo=github)](https://github.com/MOHITPRADHAN35/agentmesh)
 [![Backend](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11+-009688.svg?style=for-the-badge)](https://fastapi.tiangolo.com)
 [![Frontend](https://img.shields.io/badge/Frontend-React%2019%20%7C%20XYFlow%20%7C%20Tailwind-3b82f6.svg?style=for-the-badge)](https://react.dev)
 
