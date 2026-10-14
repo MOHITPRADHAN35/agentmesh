@@ -6,6 +6,6 @@ router = APIRouter(tags=["Health"])
 
 @router.get("/health", response_model=HealthResponse)
 def get_health():
-    """Verify live FalkorDB connectivity and graph health."""
+    """Verify live FalkorDB connectivity and health."""
     health_data = graph_service.check_health()
     return HealthResponse(**health_data)

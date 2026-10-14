@@ -102,14 +102,14 @@ class MockDeterministicProvider(BaseLLMProvider):
         ]
 
         for mem in existing_memories:
-            existing_content = mem.get("content", "").lower()
+            existing_content = (mem.get("text") or mem.get("content") or "").lower()
 
             # Check incompatibility pairs
             for term_a, term_b in incompatibilities:
                 if (term_a in nf_lower and term_b in existing_content) or (term_b in nf_lower and term_a in existing_content):
                     return {
                         "conflicting_memory_id": mem["id"],
-                        "explanation": f"Conflict detected between '{term_a}' and '{term_b}' choices. Existing memory claims '{mem['content']}' while new statement asserts '{new_fact}'."
+                        "explanation": f"Conflict detected between '{term_a}' and '{term_b}' choices. Existing memory claims '{mem.get('text') or mem.get('content')}' while new statement asserts '{new_fact}'."
                     }
 
             # Check direct negation of shared subject
@@ -123,7 +123,7 @@ class MockDeterministicProvider(BaseLLMProvider):
                        (re.search(neg, existing_content) and not re.search(neg, nf_lower)):
                         return {
                             "conflicting_memory_id": mem["id"],
-                            "explanation": f"Opposing assertions regarding {list(common_keywords)[:3]}: '{mem['content']}' vs '{new_fact}'."
+                            "explanation": f"Opposing assertions regarding {list(common_keywords)[:3]}: '{mem.get('text') or mem.get('content')}' vs '{new_fact}'."
                         }
 
         return None

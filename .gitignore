@@ -23,6 +23,7 @@ htmlcov/
 *.swp
 *.swo
 
-# Docker / OS
+# Docker / OS / Archives
 .DS_Store
 Thumbs.db
+*.zip

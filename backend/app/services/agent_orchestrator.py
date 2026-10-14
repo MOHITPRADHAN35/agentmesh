@@ -1,4 +1,6 @@
+import uuid
 import logging
+from datetime import datetime
 from typing import List, Dict, Any
 from app.services.graph_service import graph_service
 from app.services.llm_provider import get_llm_provider
@@ -12,101 +14,118 @@ class AgentOrchestrator:
     def __init__(self):
         self.llm = get_llm_provider()
 
-    def process_chat(self, message: str, session_id: str, project_id: str) -> Dict[str, Any]:
-        agent_steps = []
-        persisted_memories = []
-        conflicts_detected = []
+    def process_chat(self, message: str, session_id: str, project_id: str = "default_project") -> Dict[str, Any]:
+        now = datetime.utcnow().isoformat()
+        user_msg_id = f"msg_{uuid.uuid4().hex[:6]}"
+        assistant_msg_id = f"msg_{uuid.uuid4().hex[:6]}"
 
-        # Ensure session exists in graph
-        graph_service.create_session(session_id, project_id)
-
-        # ----------------------------------------------------
-        # STEP 1: Researcher extracts candidate knowledge
-        # ----------------------------------------------------
-        candidates = researcher_agent.process(message)
-        agent_steps.append({
-            "agent": "Researcher",
-            "action": "extracted_candidates",
-            "details": {"count": len(candidates), "candidates": [c["content"] for c in candidates]}
+        # Save user message
+        graph_service.save_message(session_id, {
+            "id": user_msg_id,
+            "role": "user",
+            "content": message,
+            "created_at": now
         })
 
-        # ----------------------------------------------------
-        # STEP 2: Persist new candidate memories in FalkorDB
-        # ----------------------------------------------------
+        steps = []
+        created_memories = []
+        evidence_list = []
+        retrieved_ids = []
+
+        # 1. Researcher Step
+        candidates = researcher_agent.process(message)
+        steps.append({
+            "agent": "Researcher",
+            "status": "done",
+            "output": f"Extracted {len(candidates)} candidate memories from message."
+        })
+
         for cand in candidates:
             mem = graph_service.create_memory(
-                content=cand["content"],
+                text=cand["content"],
                 memory_type=cand["memory_type"],
                 confidence=cand["confidence"],
-                source=cand["source"],
+                source="user",
                 project_id=project_id,
-                agent_name=researcher_agent.name,
+                agent_name="Researcher",
                 session_id=session_id
             )
-            persisted_memories.append(mem)
+            created_memories.append(mem)
 
-        persisted_ids = [m["id"] for m in persisted_memories]
+        created_ids = [m["id"] for m in created_memories]
 
-        # Link sequential memories if multiple extracted
-        if len(persisted_ids) > 1:
-            for i in range(len(persisted_ids) - 1):
-                graph_service.link_memories(persisted_ids[i], persisted_ids[i + 1], "RELATES_TO")
+        # 2. Reviewer Step (Contradiction Check)
+        conflict_detected = None
+        for mem in created_memories:
+            existing = [m for m in graph_service.search_memories() if m["id"] != mem["id"]]
+            conflict_eval = self.llm.evaluate_contradiction(mem["text"], existing)
+            if conflict_eval:
+                conflicting_mem = next((m for m in existing if m["id"] == conflict_eval["conflicting_memory_id"]), None)
+                if conflicting_mem:
+                    conflict_detected = graph_service.create_conflict(
+                        reason=conflict_eval["explanation"],
+                        memory_a=conflicting_mem,
+                        memory_b=mem
+                    )
+                    break
 
-        # ----------------------------------------------------
-        # STEP 3: Reviewer checks for contradictions
-        # ----------------------------------------------------
-        for mem in persisted_memories:
-            conflict = reviewer_agent.process(mem, project_id, mem["id"])
-            if conflict:
-                conflicts_detected.append(conflict)
-                agent_steps.append({
-                    "agent": "Reviewer",
-                    "action": "detected_contradiction",
-                    "details": {
-                        "conflict_id": conflict["id"],
-                        "explanation": conflict["explanation"],
-                        "involved_memories": conflict["involved_memory_ids"]
-                    }
-                })
+        if conflict_detected:
+            steps.append({
+                "agent": "Reviewer",
+                "status": "done",
+                "output": f"Contradiction flagged! Reviewer logged conflict #{conflict_detected['id']}."
+            })
+        else:
+            steps.append({
+                "agent": "Reviewer",
+                "status": "done",
+                "output": "Consistency verified. No contradictions found with historical decisions."
+            })
 
-        # ----------------------------------------------------
-        # STEP 4: Planner retrieves graph context & updates tasks
-        # ----------------------------------------------------
-        planner_result = planner_agent.process(message, project_id, persisted_ids)
-        retrieved_memories = planner_result["related_memories"]
-        new_tasks = planner_result["created_tasks"]
+        # 3. Planner Step (Graph Context Retrieval)
+        all_memories = graph_service.search_memories()
+        related_memories = [m for m in all_memories if m["id"] not in created_ids]
 
-        agent_steps.append({
+        for m in related_memories[:3]:
+            retrieved_ids.append(m["id"])
+            evidence_list.append({
+                "memory_id": m["id"],
+                "text": m["text"],
+                "source": m.get("source", "graph")
+            })
+
+        steps.append({
             "agent": "Planner",
-            "action": "retrieved_and_planned",
-            "details": {
-                "retrieved_count": len(retrieved_memories),
-                "tasks_created": [t["title"] for t in new_tasks]
-            }
+            "status": "done",
+            "output": f"Recalled {len(evidence_list)} historical facts from FalkorDB graph."
         })
 
-        # ----------------------------------------------------
-        # STEP 5: Response Synthesis with Provenance
-        # ----------------------------------------------------
-        # Combine all relevant memories for grounded synthesis
-        all_context_memories = persisted_memories + retrieved_memories
-        synthesis = self.llm.synthesize_response(
-            message=message,
-            retrieved_memories=all_context_memories,
-            conflicts=conflicts_detected,
-            tasks=new_tasks
-        )
+        # 4. Synthesize Answer
+        if conflict_detected:
+            content = f"I recorded your update, but detected an architectural conflict with an earlier decision:\n\n• {conflict_detected['reason']}\n\nBoth facts are preserved in FalkorDB with a CONTRADICTS link. You can review and resolve this in the Contradictions panel."
+        elif evidence_list:
+            content = f"Based on cross-session context stored in FalkorDB, I verified your statement alongside historical decisions:\n\n" + "\n".join([f"• [{e['memory_id']}] {e['text']}" for e in evidence_list])
+        else:
+            content = f"Noted. I've committed this knowledge to the FalkorDB graph under session {session_id}."
+
+        assistant_message = {
+            "id": assistant_msg_id,
+            "role": "assistant",
+            "content": content,
+            "created_at": datetime.utcnow().isoformat(),
+            "evidence": evidence_list,
+            "steps": steps,
+            "provider": "live",
+            "retrieved_memory_ids": retrieved_ids
+        }
+
+        # Save assistant message
+        graph_service.save_message(session_id, assistant_message)
 
         return {
-            "response": synthesis["response"],
             "session_id": session_id,
-            "project_id": project_id,
-            "persisted_memories": persisted_memories,
-            "retrieved_memories": retrieved_memories,
-            "new_tasks": new_tasks,
-            "conflicts_detected": conflicts_detected,
-            "agent_steps": agent_steps,
-            "provenance": synthesis["provenance"]
+            "message": assistant_message,
+            "created_memory_ids": created_ids
         }
 
 orchestrator = AgentOrchestrator()

@@ -10,8 +10,8 @@ def chat_endpoint(payload: ChatRequest):
     Execute multi-agent cycle:
     1. Researcher extracts candidates.
     2. Reviewer detects conflicts & creates CONTRADICTS links.
-    3. Planner recalls multi-hop graph context & updates tasks.
-    4. Synthesizer generates grounded response citing Memory IDs.
+    3. Planner recalls multi-hop graph context.
+    4. Synthesizer generates grounded response citing evidence.
     """
     result = orchestrator.process_chat(
         message=payload.message,

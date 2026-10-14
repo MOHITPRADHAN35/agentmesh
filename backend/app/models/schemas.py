@@ -1,96 +1,87 @@
-from typing import List, Optional, Dict, Any
-from datetime import datetime
+from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field
 
-class MemoryType(str):
-    FACT = "fact"
-    DECISION = "decision"
-    CONSTRAINT = "constraint"
+NodeType = Literal["Session", "Agent", "Memory", "Task", "Conflict"]
+AgentName = Literal["Researcher", "Planner", "Reviewer"]
+
+class HealthResponse(BaseModel):
+    status: Literal["ok", "degraded", "down"] = "ok"
+    database: bool = True
+    mode: Literal["live", "demo"] = "live"
 
 class SessionCreate(BaseModel):
-    session_id: Optional[str] = None
+    title: Optional[str] = None
     project_id: str = "default_project"
 
 class SessionResponse(BaseModel):
-    session_id: str
+    id: str
+    title: str
     created_at: str
-    project_id: str
-    memory_count: int = 0
+    message_count: int = 0
+
+class Evidence(BaseModel):
+    memory_id: str
+    text: str
+    source: str
+
+class AgentStep(BaseModel):
+    agent: AgentName
+    status: Literal["idle", "running", "done", "error"] = "done"
+    output: str
+
+class ChatMessage(BaseModel):
+    id: str
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: str
+    evidence: Optional[List[Evidence]] = Field(default_factory=list)
+    steps: Optional[List[AgentStep]] = Field(default_factory=list)
+    provider: Optional[Literal["live", "demo"]] = "live"
+    retrieved_memory_ids: Optional[List[str]] = Field(default_factory=list)
+
+class ChatRequest(BaseModel):
+    session_id: str
+    message: str
+    project_id: str = "default_project"
+
+class ChatResponse(BaseModel):
+    session_id: str
+    message: ChatMessage
+    created_memory_ids: List[str] = Field(default_factory=list)
 
 class MemoryItem(BaseModel):
     id: str
-    content: str
-    memory_type: str = "fact"
-    confidence: float = 1.0
+    text: str
+    type: str = "fact"
     source: str = "user"
-    project_id: str
-    timestamp: str
-    created_by_agent: Optional[str] = None
-    session_id: Optional[str] = None
-
-class TaskItem(BaseModel):
-    id: str
-    title: str
-    status: str = "todo"
-    priority: str = "medium"
-    project_id: str
-    informing_memory_ids: List[str] = Field(default_factory=list)
-
-class ConflictItem(BaseModel):
-    id: str
-    status: str = "open"  # "open", "resolved", "acknowledged"
-    explanation: str
-    project_id: str
-    created_at: Optional[str] = None
-    involved_memory_ids: List[str] = Field(default_factory=list)
-    resolution_note: Optional[str] = None
-
-class ConflictResolveRequest(BaseModel):
-    status: str = "resolved"  # "resolved", "acknowledged"
-    resolution_note: str
-    winning_memory_id: Optional[str] = None
-
-class ChatRequest(BaseModel):
-    message: str
     session_id: str
-    project_id: str = "default_project"
-
-class AgentStep(BaseModel):
-    agent: str
-    action: str
-    details: Dict[str, Any] = Field(default_factory=dict)
-
-class ChatResponse(BaseModel):
-    response: str
-    session_id: str
-    project_id: str
-    persisted_memories: List[MemoryItem] = Field(default_factory=list)
-    retrieved_memories: List[MemoryItem] = Field(default_factory=list)
-    new_tasks: List[TaskItem] = Field(default_factory=list)
-    conflicts_detected: List[ConflictItem] = Field(default_factory=list)
-    agent_steps: List[AgentStep] = Field(default_factory=list)
-    provenance: List[str] = Field(default_factory=list)
+    agent: Optional[AgentName] = "Researcher"
+    created_at: str
+    confidence: float = 1.0
 
 class GraphNode(BaseModel):
     id: str
-    label: str  # "Memory", "Agent", "Session", "Task", "Conflict"
-    properties: Dict[str, Any]
+    type: NodeType
+    label: str
+    data: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 class GraphEdge(BaseModel):
     id: str
     source: str
     target: str
-    label: str  # "CREATED", "CONTAINS", "RELATES_TO", "SUPPORTS", "CONTRADICTS", "INFORMS", "INVOLVES"
-    properties: Dict[str, Any] = Field(default_factory=dict)
+    label: str
 
 class GraphResponse(BaseModel):
     nodes: List[GraphNode]
     edges: List[GraphEdge]
 
-class HealthResponse(BaseModel):
-    status: str
-    database_connected: bool
-    graph_name: str
-    node_count: int
-    edge_count: int
-    error: Optional[str] = None
+class ConflictItem(BaseModel):
+    id: str
+    reason: str
+    status: Literal["open", "resolved"] = "open"
+    a: MemoryItem
+    b: MemoryItem
+
+class ConflictResolveRequest(BaseModel):
+    resolution: Literal["accept_a", "accept_b", "keep_both", "unresolved"] = "accept_b"
+    note: Optional[str] = None
