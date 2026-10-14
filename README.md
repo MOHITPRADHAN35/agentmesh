@@ -20,6 +20,19 @@
 
 ---
 
+## 📋 Hackathon Submission Deliverables (Rule #10 Compliance)
+
+| Submission Requirement | Implementation / Status | Reference Link |
+| :--- | :--- | :--- |
+| **1. Public Source-Code Repository** | Open-source repository with full Git history | [github.com/MOHITPRADHAN35/agentmesh](https://github.com/MOHITPRADHAN35/agentmesh) |
+| **2. Setup Instructions & Graph Data Model** | Complete instructions + full ASCII schema diagram and node/edge tables | [Jump to Graph Data Model](#-graph-data-model) |
+| **3. Cypher Queries & Algorithms** | Multi-hop traversal, contradiction linking, and idempotent ingestion | [Jump to Cypher Queries](#-core-cypher-queries-used-by-agents) |
+| **4. Demo Video** | Video walkthrough showing cross-session continuity & contradiction detection | *(Insert your YouTube/Loom/Drive link here)* |
+| **5. Live Deployment / Local Setup** | Docker Compose (`docker compose up -d`) & local dev commands verified | [Jump to Setup Instructions](#-quickstart--local-setup) |
+| **6. Track Specified** | **Agent Memory and Coordination** (Primary) & **Company Brain** (Secondary) | [Jump to Tracks](#-hackathon-tracks-entered) |
+
+---
+
 ## 💡 The Core Problem & FalkorDB Solution
 
 ### The Problem
