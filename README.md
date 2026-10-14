@@ -1,24 +1,39 @@
-# AgentMesh: Persistent Multi-Agent Context Engine on FalkorDB
+# 🕸️ AgentMesh: Multi-Agent Persistent Memory on FalkorDB
 
-[![Track](https://img.shields.io/badge/Track-Agent%20Memory%20%26%20Coordination-6366f1.svg)](#)
-[![Graph Database](https://img.shields.io/badge/Database-FalkorDB-dc2626.svg)](https://github.com/FalkorDB/FalkorDB)
-[![Backend](https://img.shields.io/badge/FastAPI-Python%203.11+-009688.svg)](https://fastapi.tiangolo.com)
+[![Hackathon Track](https://img.shields.io/badge/Track-Agent%20Memory%20%26%20Coordination-6366f1.svg?style=for-the-badge)](#-hackathon-tracks-entered)
+[![Secondary Track](https://img.shields.io/badge/Track-Company%20Brain-ec4899.svg?style=for-the-badge)](#-hackathon-tracks-entered)
+[![Graph Database](https://img.shields.io/badge/Database-FalkorDB%20(Latest)-dc2626.svg?style=for-the-badge)](https://github.com/FalkorDB/FalkorDB)
+[![Backend](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.11+-009688.svg?style=for-the-badge)](https://fastapi.tiangolo.com)
+[![Frontend](https://img.shields.io/badge/Frontend-React%2019%20%7C%20XYFlow%20%7C%20Tailwind-3b82f6.svg?style=for-the-badge)](https://react.dev)
 
-**AgentMesh** is an active persistent-memory and relationship engine for autonomous multi-agent teams. Built on **FalkorDB**, AgentMesh turns ephemeral conversations into an evolving, connected knowledge graph. It preserves historical decisions across sessions, shares state between specialized agents (Researcher, Reviewer, Planner), detects architectural contradictions, and provides evidence-backed answers with strict graph provenance.
+> **AgentMesh** is an active persistent-memory and relationship engine for autonomous multi-agent teams. Built natively on **FalkorDB**, AgentMesh transforms ephemeral chat sessions into a living, interconnected knowledge graph. It enables cross-session memory recall, multi-agent state coordination, automatic contradiction detection, and evidence-backed answers with strict graph provenance.
 
 ---
 
 ## 🏆 Hackathon Tracks Entered
-- **Primary Track:** **Agent Memory and Coordination**
-- **Secondary Track:** **Company Brain**
+
+1. **Primary Track: Agent Memory and Coordination**  
+   *Enables specialized agents (Researcher, Planner, Reviewer) to share a unified graph state, preserve decisions across isolated sessions, and track how knowledge evolves over time.*
+2. **Secondary Track: Company Brain**  
+   *Maintains institutional knowledge, traces the historical lineage of architectural choices, and surfaces organizational contradictions before they turn into costly mistakes.*
 
 ---
 
 ## 💡 The Core Problem & FalkorDB Solution
-* **The Problem:** Modern LLM agents have amnesia. Across sessions, they lose context, contradict earlier decisions, fail to coordinate across roles, and hallucinate without provenance.
-* **The Solution:** Rather than treating memory as passive vector text, FalkorDB acts as an **active relationship engine**. When an agent learns something new, it traverses historical decisions, detects clashes (`CONTRADICTS`), links supporting evidence (`SUPPORTS`), and binds actionable tasks (`INFORMS`).
 
-If you remove FalkorDB, the product cannot function—the graph is the core context engine.
+### The Problem
+* **Session Amnesia:** Agents lose context the moment a session closes.
+* **Factual & Architectural Drift:** As teams converse across multiple days, agents accept conflicting statements (e.g. *"We use Postgres"* on Monday vs *"We use MongoDB"* on Wednesday) without realizing they contradict earlier decisions.
+* **Black-Box Reasoning:** Standard LLMs hallucinate answers without verifiable evidence trails or provenance.
+
+### The Shift: FalkorDB as the Context Engine
+Instead of treating memory as passive vector text, **FalkorDB acts as an active relational engine**. When an agent learns something new:
+1. It traverses historical graph paths across earlier sessions.
+2. It detects clashes and links them with `[:CONTRADICTS]`.
+3. It preserves both facts with full provenance rather than silently overwriting historical decisions.
+4. It connects actionable work with `[:INFORMS]->(:Task)`.
+
+> **FalkorDB is load-bearing:** If you remove FalkorDB, cross-session continuity, contradiction resolution, and task lineage completely collapse. The graph is the engine, not decoration.
 
 ---
 
@@ -36,118 +51,202 @@ If you remove FalkorDB, the product cannot function—the graph is the core cont
                               (Conflict)
 ```
 
-### Node Labels
-* **`Memory`**: `id`, `content`, `memory_type` (fact/decision/constraint), `confidence`, `source`, `project_id`, `timestamp`
-* **`Agent`**: `name`, `role`
-* **`Session`**: `session_id`, `created_at`, `project_id`
-* **`Task`**: `id`, `title`, `status`, `priority`, `project_id`
-* **`Conflict`**: `id`, `status` (open/resolved/acknowledged), `explanation`, `project_id`, `created_at`
+### Node Schema
+| Node Label | Key Properties | Description |
+| :--- | :--- | :--- |
+| **`Session`** | `id`, `title`, `created_at` | Represents a distinct conversation or workspace session. |
+| **`Agent`** | `name`, `role` | Specialized agent identity (`Researcher`, `Planner`, `Reviewer`). |
+| **`Memory`** | `id`, `text`, `type`, `confidence`, `source`, `session_id`, `created_at` | Atomic knowledge statement, decision, or constraint. |
+| **`Conflict`** | `id`, `reason`, `status` (`open` \| `resolved`), `created_at`, `resolution` | Tracks contradictory assertions between memories. |
+| **`Task`** | `id`, `title`, `status`, `priority` | Actionable work items derived from confirmed memories. |
 
-### Relationships
-* `(:Agent)-[:CREATED]->(:Memory)`: Provenance of which agent generated or extracted the memory.
-* `(:Session)-[:CONTAINS]->(:Memory)`: Cross-session chronological containment.
-* `(:Memory)-[:RELATES_TO]->(:Memory)`: Semantic adjacency between statements.
-* `(:Memory)-[:SUPPORTS]->(:Memory)`: Supporting validation.
-* `(:Memory)-[:CONTRADICTS]->(:Memory)`: Direct architectural or factual conflicts.
-* `(:Memory)-[:INFORMS]->(:Task)`: Concrete work derived from verified facts.
-* `(:Conflict)-[:INVOLVES]->(:Memory)`: Preserves both sides of contradictory claims.
+### Edge Schema
+* `(:Session)-[:CONTAINS]->(:Memory)`: Chronological containment across user sessions.
+* `(:Agent)-[:CREATED]->(:Memory)`: Agent provenance of who extracted or verified the memory.
+* `(:Memory)-[:RELATES_TO]->(:Memory)`: Semantic and topic adjacency.
+* `(:Memory)-[:SUPPORTS]->(:Memory)`: Validating or reinforcing evidence.
+* `(:Memory)-[:CONTRADICTS]->(:Memory)`: Direct clash between incompatible facts/decisions.
+* `(:Conflict)-[:INVOLVES]->(:Memory)`: Connects contradiction records to both opposing memories.
+* `(:Memory)-[:INFORMS]->(:Task)`: Lineage connecting decisions to executable tasks.
 
 ---
 
-## 🔍 Key Cypher Queries
+## 🤖 Multi-Agent Triad Workflow
 
-### 1. Multi-Hop Graph Memory Retrieval (Cross-Session Recall)
+```
+                        [ User Input ]
+                               │
+                               ▼
+                    [ 1. Researcher Agent ]
+             • Extracts facts, decisions, and constraints.
+             • Merges new Memory nodes into FalkorDB.
+                               │
+                               ▼
+                    [ 2. Reviewer Agent ]
+             • Queries historical memories in FalkorDB.
+             • Identifies contradictions (e.g. Postgres vs Mongo).
+             • Creates Conflict node & links [:CONTRADICTS] without destroying history.
+                               │
+                               ▼
+                    [ 3. Planner Agent ]
+             • Recalls multi-hop graph context across sessions.
+             • Derives and links actionable Tasks: Memory -[:INFORMS]-> Task.
+                               │
+                               ▼
+                   [ Grounded Response ]
+             • Synthesizes answer citing exact Memory IDs and graph paths.
+```
+
+---
+
+## 🔍 Core Cypher Queries Used by Agents
+
+### 1. Ingestion & Provenance Linking (Researcher)
 ```cypher
-MATCH (m:Memory {project_id: $project_id})
-WHERE m.content CONTAINS $keyword OR m.id IN $seed_ids
+MERGE (s:Session {id: $session_id})
+MERGE (m:Memory {id: $id})
+ON CREATE SET 
+  m.text = $text,
+  m.type = $type,
+  m.confidence = $confidence,
+  m.source = $source,
+  m.created_at = $created_at,
+  m.agent = $agent,
+  m.session_id = $session_id
+MERGE (s)-[:CONTAINS]->(m)
+WITH m
+MATCH (a:Agent {name: $agent})
+MERGE (a)-[:CREATED]->(m)
+```
+
+### 2. Multi-Hop Memory Retrieval across Sessions (Planner)
+```cypher
+MATCH (m:Memory)
+WHERE toLower(m.text) CONTAINS toLower($query) OR m.id IN $seed_ids
 OPTIONAL MATCH (m)-[r:RELATES_TO|SUPPORTS]-(related:Memory)
-OPTIONAL MATCH (m)-[:INFORMS]->(t:Task)
 OPTIONAL MATCH (s:Session)-[:CONTAINS]->(m)
 RETURN 
   m.id AS id, 
-  m.content AS content, 
-  m.memory_type AS type,
-  collect(DISTINCT related.content) AS related_facts,
-  collect(DISTINCT t.title) AS informed_tasks,
-  collect(DISTINCT s.session_id) AS historical_sessions
+  m.text AS text, 
+  m.type AS type,
+  collect(DISTINCT related.text) AS related_facts,
+  collect(DISTINCT s.id) AS historical_sessions
+LIMIT 20
 ```
 
-### 2. Contradiction Detection & Conflict Graph Ingestion
+### 3. Contradiction Detection & Linking (Reviewer)
 ```cypher
-MATCH (m1:Memory {id: $new_id}), (m2:Memory {id: $existing_id})
-MERGE (m1)-[:CONTRADICTS]->(m2)
-MERGE (m2)-[:CONTRADICTS]->(m1)
+MATCH (ma:Memory {id: $mem_a_id}), (mb:Memory {id: $mem_b_id})
+MERGE (ma)-[:CONTRADICTS]->(mb)
+MERGE (mb)-[:CONTRADICTS]->(ma)
 CREATE (c:Conflict {
   id: $conflict_id,
+  reason: $reason,
   status: 'open',
-  explanation: $explanation,
-  project_id: $project_id,
   created_at: datetime()
 })
-MERGE (c)-[:INVOLVES]->(m1)
-MERGE (c)-[:INVOLVES]->(m2)
+MERGE (c)-[:INVOLVES]->(ma)
+MERGE (c)-[:INVOLVES]->(mb)
 RETURN c.id AS conflict_id
 ```
 
-### 3. Non-Destructive Conflict Resolution
+### 4. Non-Destructive Conflict Resolution
 ```cypher
-MATCH (c:Conflict {id: $conflict_id, project_id: $project_id})
-SET c.status = $resolution_status, c.resolution_note = $resolution_note
-WITH c
-MATCH (c)-[:INVOLVES]->(m:Memory)
-RETURN c.id, c.status, collect(m.id) AS involved_memories
+MATCH (c:Conflict {id: $conflict_id})
+SET c.status = 'resolved', c.resolution = $resolution, c.note = $note
+RETURN c.id, c.status
 ```
+
+---
+
+## 🖥️ UI Features: VS Code-Style 4-Way Resizable Layout
+
+The frontend includes a developer-centric workspace with **interactive drag-and-drop splitters**:
+* **Horizontal Splitters:** Resize the Left Sidebar (Sessions) and Right Panel (Conflicts & Memories) to fit any screen width.
+* **Vertical Splitter:** Drag the horizontal handle between the Chat Workspace and the Knowledge Graph explorer.
+* **Dynamic Graph Canvas:** Built with `@xyflow/react`, the graph canvas auto-flexes to 100% of any resized panel height.
+* **Live Contradiction Panel:** Resolve conflicts interactively (`Accept A`, `Accept B`, `Keep Both`) with one click.
 
 ---
 
 ## 🚀 Quickstart & Local Setup
 
-### Prerequisites
-* Docker & Docker Compose **OR** Python 3.11+ with local FalkorDB instance.
+### System Prerequisites
+* **Docker & Docker Compose** (Docker Desktop on Windows/macOS/Linux)
+* **Python 3.11+**
+* **Node.js 20+**
 
-### Option A: Docker Compose (Recommended)
+---
+
+### Option 1: Docker Compose (All Services)
+
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/your-username/agentmesh.git
 cd agentmesh
 
-# Start FalkorDB and the FastAPI backend
-docker compose up --build
+# 2. Launch FalkorDB, Backend, and Frontend
+docker compose up -d --build
 ```
-Open **[http://localhost:8000](http://localhost:8000)** in your browser to access the live dashboard with interactive Cytoscape graph visualization.
 
-### Option B: Local Python Setup
+Access points:
+* 🌐 **Frontend UI:** [http://localhost:8081](http://localhost:8081)
+* ⚙️ **Backend API:** [http://localhost:8000](http://localhost:8000)
+* 📖 **Swagger OpenAPI Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+* 🗄️ **FalkorDB Instance:** `localhost:6379`
+
+---
+
+### Option 2: Local Development Setup
+
+#### Step 1: Start FalkorDB
 ```bash
-# 1. Start FalkorDB in Docker
-docker run -p 6379:6379 -it --rm falkordb/falkordb:latest
+docker run -p 6379:6379 -it --name agentmesh-falkordb --rm falkordb/falkordb:latest
+```
 
-# 2. In a separate terminal, set up the backend
+#### Step 2: Start Backend (FastAPI)
+```bash
 cd backend
 python -m venv venv
+
 # Windows:
 .\venv\Scripts\activate
-# Linux/macOS:
+# Linux / macOS:
 source venv/bin/activate
 
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
+#### Step 3: Start Frontend (React 19 + TanStack)
+```bash
+cd frontend
+npm install --legacy-peer-deps
+npm run dev
+# The app opens on http://localhost:8081 (or 8080/5173)
+```
+
 ---
 
-## 🧪 Seeding & Running Tests
+## 🧪 Testing & Verification
 
-### Seed Demo Scenarios
-Run the explicit seed script to simulate 3 cross-session agent interactions with conflict detection:
+### 1. Run Unit & Schema Tests
+```bash
+cd backend
+python -m pytest -v
+```
+All tests validate Pydantic contract serialization, contradiction logic, and task planning.
+
+### 2. Run Explicit Demo Seed Script
+Populate multi-session scenarios with visible contradiction nodes:
 ```bash
 cd backend
 python scripts/seed_demo.py
 ```
 
-### Run Unit Tests
+### 3. Query FalkorDB Directly via Redis CLI
 ```bash
-cd backend
-pytest -v
+docker exec agentmesh-falkordb redis-cli GRAPH.QUERY agentmesh "MATCH (n) RETURN labels(n)[0] AS Label, count(n) AS Count"
 ```
 
 ---
@@ -156,12 +255,66 @@ pytest -v
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/api/health` | Live database ping, node count, and edge count |
-| `POST` | `/api/sessions` | Create or register a persistent session |
-| `GET` | `/api/sessions` | List all sessions recorded for project |
-| `POST` | `/api/chat` | Execute Researcher -> Reviewer -> Planner cycle |
-| `GET` | `/api/memories` | Filter memories by keyword or project |
-| `GET` | `/api/graph` | Serialize nodes & edges for visual Cytoscape graph |
-| `GET` | `/api/conflicts` | List open/resolved contradictions |
-| `POST` | `/api/conflicts/{id}/resolve` | Resolve contradiction without destroying facts |
-| `GET` | `/docs` | Interactive Swagger / OpenAPI documentation |
+| `GET` | `/api/health` | Live database ping and status (`status: "ok"`, `database: true`). |
+| `POST` | `/api/sessions` | Create or register a persistent session. |
+| `GET` | `/api/sessions` | List all sessions recorded for project. |
+| `GET` | `/api/sessions/{id}/messages` | Retrieve conversation history with agent execution traces. |
+| `POST` | `/api/chat` | Run Researcher ➔ Reviewer ➔ Planner agent loop. |
+| `GET` | `/api/memories` | Search and filter memories by keyword or session. |
+| `GET` | `/api/graph` | Serialize nodes and edges for `@xyflow/react` GraphExplorer. |
+| `GET` | `/api/conflicts` | List open and resolved contradiction pairs (`a` vs `b`). |
+| `POST` | `/api/conflicts/{id}/resolve` | Resolve a contradiction non-destructively. |
+| `GET` | `/docs` | Interactive Swagger documentation. |
+
+---
+
+## 📂 Project Structure
+
+```
+hackathon/
+├── docker-compose.yml                   # FalkorDB + Backend + Frontend compose
+├── README.md                            # Comprehensive project guide & Cypher docs
+├── overview.md                          # Hackathon challenge overview
+├── rules.md                             # Hackathon constraints & deliverables
+├── backend/
+│   ├── Dockerfile                       # Python 3.11 container
+│   ├── requirements.txt                 # FastAPI, FalkorDB, Pydantic, Pytest
+│   ├── .env.example & .env              # Environment configurations
+│   ├── app/
+│   │   ├── main.py                      # FastAPI entrypoint & CORS
+│   │   ├── config.py                    # Settings configuration
+│   │   ├── models/schemas.py            # Pydantic models for API contracts
+│   │   ├── services/
+│   │   │   ├── graph_service.py         # Official FalkorDB client & Cypher engine
+│   │   │   ├── agent_orchestrator.py    # Researcher -> Reviewer -> Planner cycle
+│   │   │   └── llm_provider.py          # Deterministic engine + provider abstraction
+│   │   ├── agents/
+│   │   │   ├── researcher.py            # Candidate extraction
+│   │   │   ├── reviewer.py              # Contradiction detection
+│   │   │   └── planner.py               # Context retrieval & task planning
+│   │   └── api/
+│   │       ├── health.py, sessions.py, chat.py
+│   │       ├── memories.py, graph.py, conflicts.py
+│   │   └── scripts/seed_demo.py         # Demo data seed script
+│   └── tests/
+│       ├── test_conflicts.py            # Contradiction evaluation tests
+│       └── test_graph.py                # Graph serialization tests
+└── frontend/
+    ├── Dockerfile                       # Node 22 container
+    ├── package.json                     # React 19, @xyflow/react, Tailwind v4
+    ├── vite.config.ts                   # TanStack Start / Vite config
+    └── src/
+        ├── routes/index.tsx             # 4-way VS Code resizable dashboard
+        ├── components/
+        │   ├── chat/Workspace.tsx       # Multi-agent chat interface
+        │   ├── graph/GraphExplorer.tsx  # @xyflow/react Knowledge Graph
+        │   ├── conflicts/ConflictPanel.tsx # Contradiction resolution cards
+        │   └── ui/resizable.tsx         # VS Code splitters
+        └── services/api.ts              # API client connecting to backend
+```
+
+---
+
+## ⚖️ Hackathon Compliance Disclosure
+* **Required Technology:** FalkorDB is the primary, load-bearing database.
+* **AI Tool Disclosure:** Antigravity AI assistant was used for scaffolding, refactoring, and test authoring. All architecture, Cypher design, and graph data modeling have been thoroughly verified and tested.
