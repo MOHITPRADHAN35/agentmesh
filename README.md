@@ -173,33 +173,144 @@ RETURN c.id, c.status
 
 ---
 
-## 🖥️ UI Features: VS Code-Style 4-Way Resizable Layout
+## 🖥️ Page Tour & Reviewer Guide (UI Analysis)
 
-The frontend includes a developer-centric workspace with **interactive drag-and-drop splitters**:
-* **Horizontal Splitters:** Resize the Left Sidebar (Sessions) and Right Panel (Conflicts & Memories) to fit any screen width.
-* **Vertical Splitter:** Drag the horizontal handle between the Chat Workspace and the Knowledge Graph explorer.
-* **Dynamic Graph Canvas:** Built with `@xyflow/react`, the graph canvas auto-flexes to 100% of any resized panel height.
-* **Live Contradiction Panel:** Resolve conflicts interactively (`Accept A`, `Accept B`, `Keep Both`) with one click.
+The AgentMesh interface is engineered as a developer-first, **VS Code-style 4-way resizable workspace** designed for real-time observability of multi-agent reasoning:
+
+```
+┌──────────────────┬────────────────────────────────────────────────┬──────────────────┐
+│  LEFT SIDEBAR    │  CENTER TOP: CHAT & AGENT TRIAD TIMELINE       │  RIGHT PANEL     │
+│                  │  • Active Workspace Title (Inline Editable)    │                  │
+│  • Project Select│  • Live Agent Triad Steps (Researcher/Planner) │  • CONFLICTS     │
+│  • + New session │  • Assistant Grounded Responses [mem_xxx]      │    Accept A / B  │
+│  • Session List  │  • Evidence Citation Tray [Show in Graph]      │    or Keep Both  │
+│    - Rename ✏️    │────────────────────────────────────────────────│                  │
+│    - Delete 🗑️    │  CENTER BOTTOM: FALKORDB KNOWLEDGE GRAPH       │  • RECALLED      │
+│                  │  • Node Types: Session, Agent, Memory, Conflict│    CROSS-SESSION │
+│  • Live Health:  │  • Edges: CONTAINS, CREATED, CONTRADICTS       │                  │
+│    API & DB      │  • Resolved Edges: SUPERSEDES (Green Arrow)    │  • SEARCHABLE    │
+│    Status Dot    │  • 4-Way Resizable Splitter Handle             │    MEMORIES      │
+└──────────────────┴────────────────────────────────────────────────┴──────────────────┘
+```
+
+### 1. Left Sidebar: Session Lifecycle & Graph Hygiene
+* **`+ New session`**: Spawns an isolated session node in FalkorDB with an auto-incremented title (`Session N`).
+* **Auto-Titling**: Once the first prompt is sent, the session automatically renames itself to reflect the topic of conversation.
+* **Inline Rename (✏️ / Double-Click)**: Hover over any session and click the pencil icon (or double-click) to rename it. Persists directly to FalkorDB via `PATCH /api/sessions/{id}`.
+* **Residue-Purging Delete (🗑️)**: Deleting a session executes a cascade delete in FalkorDB—purging the session node, its message history, all associated memories, and orphan conflict links to keep the knowledge graph clean.
+* **Live Health Indicator**: Continuously polls `GET /api/health` every 5s; displays `API ok · DB connected` with auto-recovery if services reboot.
+
+### 2. Center-Top: Multi-Agent Triad Execution
+* **Researcher Agent**: Scans user input, decomposes statements, and extracts atomic facts, decisions, and constraints with confidence scores.
+* **Reviewer Agent**: Evaluates new statements against the entire historical graph to flag contradictions before they cause architectural drift.
+* **Planner Agent**: Recalls multi-hop graph context from past sessions to ground answers in verified decisions.
+* **Grounded LLM Synthesis**: Powered by Google Gemini (`gemini-2.5-flash`), synthesizing natural, conversational replies citing exact memory bracket tags (e.g. `[mem_c81eefa1]`).
+* **Evidence Tray**: Clicking `Evidence · N → show in graph` highlights the cited memory nodes and their dependency chains in the knowledge graph below.
+
+### 3. Center-Bottom: Interactive FalkorDB Graph Canvas
+Built with `@xyflow/react` and auto-flexing to any panel height via the drag handle:
+* **Node Color Semantics**:
+  * 🟢 **Memory** (`#10b981`): Atomic decisions, constraints, or facts.
+  * 🟠 **Agent** (`#f97316`): Specialized agent nodes (`Researcher`, `Planner`, `Reviewer`).
+  * 🔵 **Session** (`#3b82f6`): Conversation workspace containers.
+  * 🔴 **Conflict** (`#ef4444`): Active contradiction records.
+* **Edge Semantics**:
+  * `[:CONTAINS]`: Session contains memory.
+  * `[:CREATED]`: Agent authorship provenance.
+  * `[:CONTRADICTS]`: **Red animated edge** highlighting direct clashes between conflicting assertions.
+  * `[:SUPERSEDES]`: **Vibrant green directional arrow** created when a conflict is resolved, showing the winning decision superseding the deprecated one!
+* **Scope & Filters**: Filter nodes by label (Session, Memory, Agent, Conflict) or switch between `All sessions` and `This session`.
+
+### 4. Right Panel: Context, Contradictions & Memory Explorer
+* **Contradiction Cards**: Shows conflicting assertions side-by-side (`Statement A` vs `Statement B`) with the Reviewer's rationale.
+* **One-Click Resolution**: Click `Accept A`, `Accept B`, or `Keep both` and confirm to resolve the conflict in FalkorDB.
+* **Recalled from Earlier Sessions**: Real-time provenance displaying facts pulled from other workspaces.
+* **Live Memory Search**: Filter the entire memory bank across all sessions with instant keyword matching.
+
+---
+
+## ⚡ Reviewer Quick-Test Protocol (2-Minute Evaluation)
+
+Follow these copy-paste steps to test the entire multi-agent cycle in under 2 minutes:
+
+### Test 1: Ingest Technical Decisions (Researcher)
+1. In the active session, paste:
+   > *"We decided our mobile app will be developed using Flutter, our API rate limit will be set to 100 requests per minute per IP, and our beta testing phase begins on December 1st."*
+2. **Observe**:
+   - The **Researcher** extracts 3 candidate memories.
+   - The session auto-renames to your topic.
+   - 3 green `Memory` nodes appear in the Knowledge Graph connected to your session and the `Researcher`.
+
+### Test 2: Trigger Contradiction Detection (Reviewer)
+1. In the same or a new session, paste:
+   > *"We changed our mind: our mobile app will NOT use Flutter; we must build native iOS and Android apps with Swift and Kotlin."*
+2. **Observe**:
+   - The **Reviewer** flags an architectural conflict between Flutter and Native Swift/Kotlin.
+   - A red animated **`CONTRADICTS`** link connects both memories in the Knowledge Graph.
+   - The **Conflicts** badge in the right panel displays an open contradiction card.
+
+### Test 3: Resolve Contradiction & Observe `SUPERSEDES` Link
+1. In the right panel, under **Conflicts**, click **Accept B** (Native Swift/Kotlin) and click **Confirm**.
+2. **Observe**:
+   - The red `CONTRADICTS` link vanishes.
+   - A green **`SUPERSEDES`** edge appears pointing from the Native decision &rarr; Flutter decision!
+   - The open conflict badge clears to 0.
+
+### Test 4: Cross-Session Grounded Recall (Planner)
+1. Click **`+ New session`** in the left sidebar to start a clean workspace.
+2. Ask:
+   > *"What mobile architecture and API rate limit did we decide on?"*
+3. **Observe**:
+   - The **Planner** recalls historical facts across sessions from FalkorDB.
+   - Gemini synthesizes the answer, correctly stating Native Swift/Kotlin (citing the superseding memory) and the 100 req/min rate limit.
+   - Click `Evidence → show in graph` to highlight the exact provenance nodes.
+
+### Test 5: Session Management & Residue Cleanup
+1. **Rename**: Hover over your session in the sidebar, click the **Pencil icon** (or double-click), rename it to `Mobile Architecture Plan`, and press Enter.
+2. **Delete**: Click the **Trash icon** on any session. Notice that the session, its messages, memories, and graph residue are completely cleaned out of FalkorDB.
+
+---
+
+## ⚙️ Configuration & Environment Variables
+
+### Where to Add API Keys
+All backend configuration lives in `backend/.env` (or passed via `docker-compose.yml`):
+
+| Variable | Default | Purpose / Recommended Value |
+| :--- | :--- | :--- |
+| **`LLM_PROVIDER`** | `gemini` | Choose between `gemini`, `openai`, or `mock` (deterministic offline demo). |
+| **`GEMINI_API_KEY`** | *(empty)* | Your Google AI Studio API key (starts with `AIza...`). |
+| **`GEMINI_MODEL`** | `gemini-2.5-flash` | Target model for semantic extraction & conversational synthesis. |
+| **`OPENAI_API_KEY`** | *(empty)* | Optional: OpenAI key if using `LLM_PROVIDER=openai`. |
+| **`FALKORDB_HOST`** | `localhost` (`falkordb` in Docker) | Hostname for the FalkorDB instance. |
+| **`FALKORDB_PORT`** | `6379` | Default Redis/FalkorDB port. |
+| **`FALKORDB_GRAPH`** | `agentmesh` | Graph namespace in FalkorDB. |
+
+> **Offline / Demo Mode**: Setting `LLM_PROVIDER=mock` enables 100% deterministic, zero-external-dependency execution using local heuristic evaluation and regex contradiction matrices.
 
 ---
 
 ## 🚀 Quickstart & Local Setup
 
 ### System Prerequisites
-* **Docker & Docker Compose** (Docker Desktop on Windows/macOS/Linux)
-* **Python 3.11+**
-* **Node.js 20+**
+* **Docker & Docker Desktop** (Windows, macOS, or Linux)
+* **Python 3.11+** (for local backend development)
+* **Node.js 20+** (for local frontend development)
 
 ---
 
-### Option 1: Docker Compose (All Services)
+### Option 1: Docker Compose (Recommended)
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/agentmesh.git
+git clone https://github.com/MOHITPRADHAN35/agentmesh.git
 cd agentmesh
 
-# 2. Launch FalkorDB, Backend, and Frontend
+# 2. Add your Gemini API Key in backend/.env (Optional: runs on mock if omitted)
+# GEMINI_API_KEY=your_key_here
+# LLM_PROVIDER=gemini
+
+# 3. Launch FalkorDB and Backend
 docker compose up -d --build
 ```
 
@@ -237,7 +348,7 @@ uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install --legacy-peer-deps
 npm run dev
-# The app opens on http://localhost:8081 (or 8080/5173)
+# The app opens on http://localhost:8081
 ```
 
 ---
@@ -249,16 +360,9 @@ npm run dev
 cd backend
 python -m pytest -v
 ```
-All tests validate Pydantic contract serialization, contradiction logic, and task planning.
+Validates Pydantic contract serialization, contradiction logic, and task planning.
 
-### 2. Run Explicit Demo Seed Script
-Populate multi-session scenarios with visible contradiction nodes:
-```bash
-cd backend
-python scripts/seed_demo.py
-```
-
-### 3. Query FalkorDB Directly via Redis CLI
+### 2. Query FalkorDB Directly via Redis CLI
 ```bash
 docker exec agentmesh-falkordb redis-cli GRAPH.QUERY agentmesh "MATCH (n) RETURN labels(n)[0] AS Label, count(n) AS Count"
 ```
@@ -269,15 +373,17 @@ docker exec agentmesh-falkordb redis-cli GRAPH.QUERY agentmesh "MATCH (n) RETURN
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/api/health` | Live database ping and status (`status: "ok"`, `database: true`). |
-| `POST` | `/api/sessions` | Create or register a persistent session. |
-| `GET` | `/api/sessions` | List all sessions recorded for project. |
+| `GET` | `/api/health` | Live database ping and status (`status: "ok"`, `database: true`, `mode: "live"`). |
+| `POST` | `/api/sessions` | Create or register a persistent session node in FalkorDB. |
+| `GET` | `/api/sessions` | List all sessions with live message and memory counts. |
+| `PATCH` | `/api/sessions/{id}` | Rename session title with immediate FalkorDB persistence. |
+| `DELETE` | `/api/sessions/{id}` | Cascade-delete session, messages, memories, and orphan conflict edges. |
 | `GET` | `/api/sessions/{id}/messages` | Retrieve conversation history with agent execution traces. |
-| `POST` | `/api/chat` | Run Researcher ➔ Reviewer ➔ Planner agent loop. |
-| `GET` | `/api/memories` | Search and filter memories by keyword or session. |
-| `GET` | `/api/graph` | Serialize nodes and edges for `@xyflow/react` GraphExplorer. |
+| `POST` | `/api/chat` | Run Researcher ➔ Reviewer ➔ Planner ➔ Synthesizer cycle. |
+| `GET` | `/api/memories` | Search and filter memories by query string across all sessions. |
+| `GET` | `/api/graph` | Serialize nodes and edges for `@xyflow/react` Knowledge Graph explorer. |
 | `GET` | `/api/conflicts` | List open and resolved contradiction pairs (`a` vs `b`). |
-| `POST` | `/api/conflicts/{id}/resolve` | Resolve a contradiction non-destructively. |
+| `POST` | `/api/conflicts/{id}/resolve` | Resolve conflict: removes `CONTRADICTS` and links `SUPERSEDES` in FalkorDB. |
 | `GET` | `/docs` | Interactive Swagger documentation. |
 
 ---
