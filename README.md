@@ -435,6 +435,14 @@ hackathon/
 
 ---
 
+## 👥 Contributors & Team
+
+* **Mohit Pradhan** — [@MOHITPRADHAN35](https://github.com/MOHITPRADHAN35)
+* **Aditya** — [@Aditya-ha11](https://github.com/Aditya-ha11)
+
+---
+
 ## ⚖️ Hackathon Compliance Disclosure
 * **Required Technology:** FalkorDB is the primary, load-bearing database.
 * **AI Tool Disclosure:** Antigravity AI assistant was used for scaffolding, refactoring, and test authoring. All architecture, Cypher design, and graph data modeling have been thoroughly verified and tested.
+
