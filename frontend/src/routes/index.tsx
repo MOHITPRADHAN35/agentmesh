@@ -6,7 +6,7 @@ import { Workspace } from "@/components/chat/Workspace";
 import { GraphExplorer } from "@/components/graph/GraphExplorer";
 import { ConflictPanel } from "@/components/conflicts/ConflictPanel";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { Plus, Menu, PanelRight, Maximize2, Minimize2, RotateCcw, Database, X, Search } from "lucide-react";
+import { Plus, Menu, PanelRight, Maximize2, Minimize2, RotateCcw, Database, X, Search, Trash2, Pencil, Check } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -41,6 +41,8 @@ function App() {
   const [graphScope, setGraphScope] = useState<"all" | "session">("all");
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
 
   const refreshSide = useCallback(async () => {
     const [c, g] = await Promise.allSettled([api.conflicts(), api.graph(graphScope === "session" ? active ?? undefined : undefined)]);
@@ -49,16 +51,94 @@ function App() {
   }, [active, graphScope]);
 
   useEffect(() => {
-    api.health().then(setHealth).catch(() => setHealth({ status: "down", database: false }));
-    api.sessions().then((s) => { setSessions(s); if (s[0]) setActive(s[0].id); }).catch((e) => setError(e.message));
+    let loaded = false;
+    const checkStatus = async () => {
+      try {
+        const h = await api.health();
+        setHealth(h);
+        if (!loaded) {
+          const s = await api.sessions();
+          if (s.length > 0 && s[0]) {
+            loaded = true;
+            setSessions(s);
+            setActive((curr) => curr ?? s[0]!.id);
+            setError(null);
+          }
+        }
+      } catch {
+        setHealth({ status: "down", database: false });
+      }
+    };
+
+    checkStatus();
+    const interval = setInterval(checkStatus, 5000);
+    return () => clearInterval(interval);
   }, []);
   useEffect(() => { if (active) api.messages(active).then(setMessages).catch(() => setMessages([])); else setMessages([]); }, [active]);
   useEffect(() => { refreshSide(); }, [refreshSide]);
   useEffect(() => { const t = setTimeout(() => api.memories(query).then(setMemories).catch(() => {}), 200); return () => clearTimeout(t); }, [query, lastWrite]);
 
   const newSession = async () => {
-    const s = await api.createSession(); setSessions((p) => [s, ...p]); setActive(s.id); setLeftOpen(false); setHighlight(new Set());
+    try {
+      const s = await api.createSession();
+      setSessions((p) => [s, ...p.filter((x) => x.id !== s.id)]);
+      setActive(s.id);
+      setMessages([]);
+      setLeftOpen(false);
+      setHighlight(new Set());
+      refreshSide();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
+
+  const deleteSession = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      await api.deleteSession(id);
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== id);
+        if (active === id) {
+          if (next.length > 0 && next[0]) {
+            setActive(next[0].id);
+          } else {
+            setActive(null);
+            setMessages([]);
+          }
+        }
+        return next;
+      });
+      refreshSide();
+      api.memories(query).then(setMemories).catch(() => {});
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const startRename = (s: Session, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setEditingId(s.id);
+    setEditTitle(s.title);
+  };
+
+  const saveRename = async (id: string, e?: React.FormEvent | React.MouseEvent | React.KeyboardEvent) => {
+    if (e) e.stopPropagation();
+    const trimmed = editTitle.trim();
+    if (!trimmed) {
+      setEditingId(null);
+      return;
+    }
+    try {
+      await api.renameSession(id, trimmed);
+      setSessions((prev) => prev.map((s) => s.id === id ? { ...s, title: trimmed } : s));
+      setEditingId(null);
+      refreshSide();
+    } catch (err) {
+      setError((err as Error).message);
+      setEditingId(null);
+    }
+  };
+
   const send = async (text: string) => {
     let sid = active;
     if (!sid) { const s = await api.createSession(); setSessions((p) => [s, ...p]); sid = s.id; setActive(sid); }
@@ -96,10 +176,72 @@ function App() {
       <nav className="mt-2 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2">
         {sessions.length === 0 && <p className="px-3 text-xs text-muted-foreground">No sessions yet.</p>}
         {sessions.map((s) => (
-          <button key={s.id} onClick={() => { setActive(s.id); setLeftOpen(false); setHighlight(new Set()); }}
-            className={`block w-full truncate rounded-md px-3 py-2 text-left text-sm transition ${s.id === active ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-secondary/60"}`}>
-            {s.title}<span className="block font-mono text-[10px] opacity-60">{new Date(s.created_at).toLocaleDateString()} · {s.message_count ?? 0} msgs</span>
-          </button>
+          <div
+            key={s.id}
+            className={`group relative flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition ${s.id === active ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-secondary/60"}`}
+          >
+            {editingId === s.id ? (
+              <form
+                onSubmit={(e) => { e.preventDefault(); saveRename(s.id, e); }}
+                className="flex items-center gap-1.5 w-full py-0.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  autoFocus
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setEditingId(null);
+                  }}
+                  className="flex-1 min-w-0 rounded border border-primary bg-card px-2 py-0.5 text-xs text-foreground outline-none"
+                />
+                <button
+                  type="submit"
+                  title="Save title"
+                  className="p-1 rounded text-primary hover:bg-primary/20 shrink-0"
+                >
+                  <Check className="size-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingId(null)}
+                  title="Cancel"
+                  className="p-1 rounded text-muted-foreground hover:bg-secondary shrink-0"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </form>
+            ) : (
+              <>
+                <button
+                  onClick={() => { setActive(s.id); setLeftOpen(false); setHighlight(new Set()); }}
+                  onDoubleClick={(e) => startRename(s, e)}
+                  className="min-w-0 flex-1 truncate text-left"
+                >
+                  <span className="block truncate font-medium">{s.title}</span>
+                  <span className="block font-mono text-[10px] opacity-60">{new Date(s.created_at).toLocaleDateString()} · {s.message_count ?? 0} msgs</span>
+                </button>
+                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition shrink-0 ml-1">
+                  <button
+                    onClick={(e) => startRename(s, e)}
+                    title="Rename session"
+                    aria-label={`Rename ${s.title}`}
+                    className="p-1 rounded hover:bg-secondary hover:text-foreground text-muted-foreground transition"
+                  >
+                    <Pencil className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={(e) => deleteSession(s.id, e)}
+                    title="Delete session"
+                    aria-label={`Delete ${s.title}`}
+                    className="p-1 rounded hover:bg-destructive/15 hover:text-destructive text-muted-foreground transition"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         ))}
       </nav>
       <div className="space-y-2 border-t border-border p-4 font-mono text-[10px] shrink-0">
@@ -171,7 +313,48 @@ function App() {
           <main className="flex h-full w-full flex-col min-w-0 overflow-hidden">
             <header className="flex items-center gap-3 border-b border-border px-4 py-2.5 shrink-0 bg-surface/50">
               <button className="md:hidden" onClick={() => setLeftOpen(true)} aria-label="Menu"><Menu className="size-5" /></button>
-              <h1 className="truncate text-sm font-medium">{sessions.find((s) => s.id === active)?.title ?? "New workspace"}</h1>
+              {active && editingId === active ? (
+                <form
+                  onSubmit={(e) => { e.preventDefault(); saveRename(active, e); }}
+                  className="flex items-center gap-1.5"
+                >
+                  <input
+                    autoFocus
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Escape") setEditingId(null); }}
+                    className="rounded border border-primary bg-card px-2 py-0.5 text-sm font-medium text-foreground outline-none"
+                  />
+                  <button type="submit" title="Save title" className="p-1 rounded text-primary hover:bg-primary/20"><Check className="size-4" /></button>
+                  <button type="button" onClick={() => setEditingId(null)} title="Cancel" className="p-1 rounded text-muted-foreground hover:bg-secondary"><X className="size-4" /></button>
+                </form>
+              ) : (
+                <div className="flex items-center gap-1.5 group min-w-0">
+                  <h1
+                    onDoubleClick={() => {
+                      const s = sessions.find((x) => x.id === active);
+                      if (s) startRename(s);
+                    }}
+                    className="truncate text-sm font-medium cursor-pointer"
+                    title="Double-click to rename"
+                  >
+                    {sessions.find((s) => s.id === active)?.title ?? "New workspace"}
+                  </h1>
+                  {active && (
+                    <button
+                      onClick={() => {
+                        const s = sessions.find((x) => x.id === active);
+                        if (s) startRename(s);
+                      }}
+                      title="Rename current session"
+                      aria-label="Rename current session"
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition"
+                    >
+                      <Pencil className="size-3" />
+                    </button>
+                  )}
+                </div>
+              )}
               {lastWrite && <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 font-mono text-[10px] text-success"><Database className="size-3" />memory saved {new Date(lastWrite).toLocaleTimeString()}</span>}
               <button className="ml-auto lg:hidden relative" onClick={() => setRightOpen(true)} aria-label="Context"><PanelRight className="size-5" />{openConflicts > 0 && <span className="absolute -right-1 -top-1 size-2 rounded-full bg-destructive" />}</button>
             </header>
@@ -183,7 +366,13 @@ function App() {
               {/* Top: Chat Workspace */}
               <ResizablePanel defaultSize="52%" minSize="20%" id="chat-panel">
                 <div className="h-full w-full min-h-0 overflow-hidden">
-                  <Workspace messages={messages} sending={sending} onSend={send} onEvidence={(ids) => setHighlight(new Set(ids))} />
+                  <Workspace
+                    sessionTitle={sessions.find((s) => s.id === active)?.title}
+                    messages={messages}
+                    sending={sending}
+                    onSend={send}
+                    onEvidence={(ids) => setHighlight(new Set(ids))}
+                  />
                 </div>
               </ResizablePanel>
 

@@ -29,6 +29,10 @@ export const api = {
   sessions: (): Promise<Session[]> => (isDemo ? demo.sessions() : req("/api/sessions")),
   createSession: (title?: string): Promise<Session> =>
     isDemo ? demo.createSession(title) : req("/api/sessions", { method: "POST", body: JSON.stringify({ title }) }),
+  deleteSession: (id: string): Promise<{ success: boolean }> =>
+    isDemo ? demo.deleteSession(id) : req(`/api/sessions/${id}`, { method: "DELETE" }),
+  renameSession: (id: string, title: string): Promise<Session> =>
+    isDemo ? demo.renameSession(id, title) : req(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   chat: (session_id: string, message: string): Promise<ChatResponse> =>
     isDemo ? demo.chat(session_id, message) : req("/api/chat", { method: "POST", body: JSON.stringify({ session_id, message }) }, 90000),
   messages: (session_id: string) => (isDemo ? demo.messages(session_id) : req<ChatResponse["message"][]>(`/api/sessions/${session_id}/messages`).catch(() => [])),

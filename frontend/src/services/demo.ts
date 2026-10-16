@@ -50,6 +50,21 @@ export const demo = {
     const s = load(); const ses = { id: uid("ses"), title: title || "Untitled session", created_at: now(), message_count: 0 };
     s.sessions.push(ses); s.messages[ses.id] = []; save(s); return ses;
   },
+  async deleteSession(id: string) {
+    const s = load();
+    s.sessions = s.sessions.filter((x) => x.id !== id);
+    delete s.messages[id];
+    s.memories = s.memories.filter((m) => m.session_id !== id);
+    save(s);
+    return { success: true };
+  },
+  async renameSession(id: string, title: string) {
+    const s = load();
+    const ses = s.sessions.find((x) => x.id === id);
+    if (ses) ses.title = title;
+    save(s);
+    return ses ?? { id, title, created_at: now(), message_count: 0 };
+  },
   async messages(id: string) { await wait(100); return load().messages[id] ?? []; },
   async chat(session_id: string, message: string): Promise<ChatResponse> {
     await wait(1600);

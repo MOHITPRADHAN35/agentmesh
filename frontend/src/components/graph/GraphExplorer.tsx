@@ -35,10 +35,27 @@ export function GraphExplorer({ graph, highlight, selectedId, onSelect, large }:
       };
     });
     const edges: Edge[] = graph.edges.filter((e) => visIds.has(e.source) && visIds.has(e.target)).map((e) => {
-      const c = e.label === "CONTRADICTS"; const hl = highlight.has(e.source) && highlight.has(e.target);
-      return { id: e.id, source: e.source, target: e.target, label: e.label, animated: c || hl,
-        style: { stroke: c ? "var(--node-conflict)" : hl ? "var(--primary)" : "color-mix(in oklab, var(--foreground) 22%, transparent)", strokeWidth: c || hl ? 2 : 1 },
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 } };
+      const c = e.label === "CONTRADICTS";
+      const sup = e.label === "SUPERSEDES";
+      const hl = highlight.has(e.source) && highlight.has(e.target);
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        label: e.label,
+        animated: c || hl,
+        style: {
+          stroke: c
+            ? "var(--node-conflict)"
+            : sup
+            ? "#22c55e"
+            : hl
+            ? "var(--primary)"
+            : "color-mix(in oklab, var(--foreground) 22%, transparent)",
+          strokeWidth: c || sup || hl ? 2 : 1,
+        },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+      };
     });
     return { nodes, edges };
   }, [graph, hidden, highlight, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -8,9 +8,11 @@ from app.config import settings
 
 logger = logging.getLogger("agentmesh.graph_service")
 
-# Fallback in-memory storage for message history & when FalkorDB is offline
+# In-memory cache for fast lookups & offline fallback
 _in_memory_messages: Dict[str, List[Dict[str, Any]]] = {}
 _in_memory_conflicts: Dict[str, Dict[str, Any]] = {}
+_in_memory_memories: Dict[str, Dict[str, Any]] = {}
+_in_memory_sessions: Dict[str, Dict[str, Any]] = {}
 
 class GraphService:
     def __init__(self):
@@ -35,14 +37,12 @@ class GraphService:
         try:
             g = self.get_graph()
             res = g.query("MATCH (n) RETURN count(n) AS node_count")
-            node_count = res.result_set[0][0] if res.result_set else 0
             return {
                 "status": "ok",
                 "database": True,
                 "mode": "live"
             }
         except Exception as e:
-            logger.warning(f"FalkorDB check failed (falling back to demo mode): {e}")
             return {
                 "status": "ok",
                 "database": False,
@@ -57,14 +57,13 @@ class GraphService:
                 "CREATE INDEX FOR (m:Memory) ON (m.id)",
                 "CREATE INDEX FOR (s:Session) ON (s.id)",
                 "CREATE INDEX FOR (a:Agent) ON (a.name)",
-                "CREATE INDEX FOR (t:Task) ON (t.id)",
                 "CREATE INDEX FOR (c:Conflict) ON (c.id)"
             ]
-            for query in index_queries:
+            for q in index_queries:
                 try:
-                    g.query(query)
-                except Exception as ex:
-                    logger.debug(f"Index notice: {ex}")
+                    g.query(q)
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning(f"Indices init note: {e}")
 
@@ -72,8 +71,18 @@ class GraphService:
 
     def create_session(self, title: Optional[str] = None, session_id: Optional[str] = None, project_id: str = "default_project") -> Dict[str, Any]:
         sid = session_id or f"sess_{uuid.uuid4().hex[:6]}"
-        stitle = title or f"Session {sid}"
         now = datetime.utcnow().isoformat()
+        
+        if not title:
+            existing = self.list_sessions(project_id)
+            count = len(existing) + 1
+            stitle = f"Session {count}"
+        else:
+            stitle = title
+
+        session_obj = {"id": sid, "title": stitle, "created_at": now, "project_id": project_id, "message_count": len(_in_memory_messages.get(sid, []))}
+        _in_memory_sessions[sid] = session_obj
+
         try:
             query = """
             MERGE (s:Session {id: $sid})
@@ -82,42 +91,138 @@ class GraphService:
             """
             res = self.get_graph().query(query, params={"sid": sid, "title": stitle, "created_at": now, "project_id": project_id})
             r = res.result_set[0]
-            return {"id": r[0], "title": r[1], "created_at": str(r[2]), "message_count": len(_in_memory_messages.get(sid, []))}
+            return {"id": str(r[0]), "title": str(r[1]), "created_at": str(r[2]), "message_count": len(_in_memory_messages.get(sid, []))}
         except Exception as e:
-            logger.warning(f"FalkorDB session fallback: {e}")
-            return {"id": sid, "title": stitle, "created_at": now, "message_count": len(_in_memory_messages.get(sid, []))}
+            logger.error(f"Error creating session in FalkorDB: {e}")
+            return session_obj
+
+    def update_session_title(self, session_id: str, new_title: str) -> Dict[str, Any]:
+        stitle = new_title.strip() or "Untitled Session"
+        now = datetime.utcnow().isoformat()
+        if session_id in _in_memory_sessions:
+            _in_memory_sessions[session_id]["title"] = stitle
+
+        try:
+            query = """
+            MATCH (s:Session {id: $sid})
+            SET s.title = $title
+            RETURN s.id, s.title, s.created_at
+            """
+            res = self.get_graph().query(query, params={"sid": session_id, "title": stitle})
+            if res.result_set:
+                r = res.result_set[0]
+                return {
+                    "id": str(r[0]),
+                    "title": str(r[1]),
+                    "created_at": str(r[2]),
+                    "message_count": len(_in_memory_messages.get(session_id, []))
+                }
+        except Exception as e:
+            logger.warning(f"Failed to update session title in FalkorDB: {e}")
+
+        return _in_memory_sessions.get(session_id, {
+            "id": session_id,
+            "title": stitle,
+            "created_at": now,
+            "message_count": len(_in_memory_messages.get(session_id, []))
+        })
 
     def list_sessions(self, project_id: str = "default_project") -> List[Dict[str, Any]]:
         sessions = []
         try:
             query = """
             MATCH (s:Session)
-            OPTIONAL MATCH (s)-[:CONTAINS]->(m:Memory)
-            RETURN s.id, s.title, s.created_at, count(m) AS mem_count
+            OPTIONAL MATCH (s)-[:HAS_MESSAGE]->(msg:Message)
+            OPTIONAL MATCH (s)-[:CONTAINS]->(mem:Memory)
+            RETURN s.id, s.title, s.created_at, count(msg) AS msg_count, count(mem) AS mem_count
             ORDER BY s.created_at DESC
             """
             res = self.get_graph().query(query)
             for r in res.result_set:
-                sid = r[0]
+                sid = str(r[0])
+                msg_count = int(r[3]) if len(r) > 3 and r[3] is not None else 0
+                cached_msgs = len(_in_memory_messages.get(sid, []))
+                total_msgs = max(msg_count, cached_msgs)
                 sessions.append({
                     "id": sid,
-                    "title": r[1] or f"Session {sid}",
-                    "created_at": str(r[2]) if r[2] else datetime.utcnow().isoformat(),
-                    "message_count": len(_in_memory_messages.get(sid, []))
+                    "title": str(r[1]) if r[1] else f"Session {sid}",
+                    "created_at": str(r[2]),
+                    "message_count": total_msgs
                 })
         except Exception as e:
-            logger.warning(f"FalkorDB list_sessions fallback: {e}")
+            logger.warning(f"Error listing sessions from FalkorDB: {e}")
+
+        # Merge any in-memory sessions that haven't shown up in FalkorDB yet
+        seen_sids = {s["id"] for s in sessions}
+        for sid, sess in _in_memory_sessions.items():
+            if sid not in seen_sids:
+                sessions.append(sess)
 
         if not sessions:
-            # Provide default initial session
             default_id = "default"
-            sessions.append({
+            default_sess = {
                 "id": default_id,
                 "title": "Main Project Session",
                 "created_at": datetime.utcnow().isoformat(),
                 "message_count": len(_in_memory_messages.get(default_id, []))
-            })
+            }
+            _in_memory_sessions[default_id] = default_sess
+            sessions.append(default_sess)
+
         return sessions
+
+    def delete_session(self, session_id: str) -> bool:
+        """Completely delete session, messages, memories, and any residue from FalkorDB & memory."""
+        # 1. Clean in-memory cache
+        _in_memory_sessions.pop(session_id, None)
+        _in_memory_messages.pop(session_id, None)
+
+        deleted_mem_ids = {
+            mid for mid, m in _in_memory_memories.items()
+            if m.get("session_id") == session_id
+        }
+        for mid in deleted_mem_ids:
+            _in_memory_memories.pop(mid, None)
+
+        deleted_conf_ids = {
+            cid for cid, c in _in_memory_conflicts.items()
+            if c.get("a", {}).get("id") in deleted_mem_ids or c.get("b", {}).get("id") in deleted_mem_ids
+        }
+        for cid in deleted_conf_ids:
+            _in_memory_conflicts.pop(cid, None)
+
+        # 2. Clean FalkorDB graph
+        try:
+            g = self.get_graph()
+            # Delete conflicts involving memories from this session
+            q_conflicts = """
+            MATCH (m:Memory)
+            WHERE m.session_id = $sid
+            OPTIONAL MATCH (c:Conflict)-[:INVOLVES]->(m)
+            DETACH DELETE c
+            """
+            g.query(q_conflicts, params={"sid": session_id})
+
+            # Delete memories belonging to this session
+            q_memories = """
+            MATCH (m:Memory)
+            WHERE m.session_id = $sid
+            DETACH DELETE m
+            """
+            g.query(q_memories, params={"sid": session_id})
+
+            # Delete session and its messages
+            q_session = """
+            MATCH (s:Session {id: $sid})
+            OPTIONAL MATCH (s)-[:HAS_MESSAGE]->(msg:Message)
+            OPTIONAL MATCH (s)-[:CONTAINS]->(rem_mem:Memory)
+            DETACH DELETE s, msg, rem_mem
+            """
+            g.query(q_session, params={"sid": session_id})
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting session {session_id} from FalkorDB: {e}")
+            return False
 
     # --- Message History Operations ---
 
@@ -126,8 +231,47 @@ class GraphService:
             _in_memory_messages[session_id] = []
         _in_memory_messages[session_id].append(message)
 
+        try:
+            mid = message.get("id") or f"msg_{uuid.uuid4().hex[:6]}"
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            created_at = message.get("created_at") or datetime.utcnow().isoformat()
+            raw_json = json.dumps(message)
+            query = """
+            MERGE (m:Message {id: $mid})
+            ON CREATE SET m.role = $role, m.content = $content, m.created_at = $created_at, m.data = $data
+            WITH m
+            MATCH (s:Session {id: $sid})
+            MERGE (s)-[:HAS_MESSAGE]->(m)
+            """
+            self.get_graph().query(query, params={"mid": mid, "role": role, "content": content, "created_at": created_at, "data": raw_json, "sid": session_id})
+        except Exception as e:
+            logger.warning(f"Error saving message to FalkorDB: {e}")
+
     def get_messages(self, session_id: str) -> List[Dict[str, Any]]:
-        return _in_memory_messages.get(session_id, [])
+        mem_msgs = _in_memory_messages.get(session_id, [])
+        if mem_msgs:
+            return mem_msgs
+        try:
+            query = """
+            MATCH (s:Session {id: $sid})-[:HAS_MESSAGE]->(m:Message)
+            RETURN m.data, m.created_at
+            ORDER BY m.created_at ASC
+            """
+            res = self.get_graph().query(query, params={"sid": session_id})
+            msgs = []
+            for r in res.result_set:
+                if r[0]:
+                    try:
+                        msgs.append(json.loads(r[0]))
+                    except Exception:
+                        pass
+            if msgs:
+                _in_memory_messages[session_id] = msgs
+                return msgs
+        except Exception as e:
+            logger.warning(f"Error loading messages from FalkorDB: {e}")
+        return mem_msgs
 
     # --- Memory Operations ---
 
@@ -144,6 +288,17 @@ class GraphService:
     ) -> Dict[str, Any]:
         mid = memory_id or f"mem_{uuid.uuid4().hex[:8]}"
         now = datetime.utcnow().isoformat()
+        mem_obj = {
+            "id": mid,
+            "text": text,
+            "type": memory_type,
+            "source": source,
+            "session_id": session_id,
+            "agent": agent_name,
+            "created_at": now,
+            "confidence": confidence
+        }
+        _in_memory_memories[mid] = mem_obj
 
         try:
             self.create_session(session_id=session_id, project_id=project_id)
@@ -177,27 +332,18 @@ class GraphService:
             res = self.get_graph().query(query, params=params)
             r = res.result_set[0]
             return {
-                "id": r[0],
-                "text": r[1],
-                "type": r[2],
-                "source": r[3],
-                "session_id": r[4],
-                "agent": r[5],
+                "id": str(r[0]),
+                "text": str(r[1]),
+                "type": str(r[2]),
+                "source": str(r[3]),
+                "session_id": str(r[4]),
+                "agent": str(r[5]),
                 "created_at": str(r[6]),
-                "confidence": float(r[7])
+                "confidence": float(r[7]) if r[7] else 1.0
             }
         except Exception as e:
-            logger.warning(f"FalkorDB create_memory fallback: {e}")
-            return {
-                "id": mid,
-                "text": text,
-                "type": memory_type,
-                "source": source,
-                "session_id": session_id,
-                "agent": agent_name,
-                "created_at": now,
-                "confidence": confidence
-            }
+            logger.error(f"Error creating memory in FalkorDB: {e}")
+            return mem_obj
 
     def search_memories(self, query_str: Optional[str] = None, project_id: str = "default_project") -> List[Dict[str, Any]]:
         try:
@@ -221,19 +367,23 @@ class GraphService:
             memories = []
             for r in res.result_set:
                 memories.append({
-                    "id": r[0],
-                    "text": r[1],
-                    "type": r[2],
-                    "source": r[3],
-                    "session_id": r[4],
-                    "agent": r[5],
+                    "id": str(r[0]),
+                    "text": str(r[1]),
+                    "type": str(r[2]),
+                    "source": str(r[3]),
+                    "session_id": str(r[4]),
+                    "agent": str(r[5]),
                     "created_at": str(r[6]),
                     "confidence": float(r[7]) if r[7] else 1.0
                 })
             return memories
         except Exception as e:
-            logger.warning(f"FalkorDB search_memories fallback: {e}")
-            return []
+            logger.error(f"Error searching memories: {e}")
+            mems = list(_in_memory_memories.values())
+            if query_str:
+                q_lower = query_str.lower()
+                mems = [m for m in mems if q_lower in m.get("text", "").lower()]
+            return mems
 
     # --- Conflict Operations ---
 
@@ -262,12 +412,11 @@ class GraphService:
             """
             g.query(q, params={"cid": cid, "reason": reason, "created_at": now, "aid": memory_a["id"], "bid": memory_b["id"]})
         except Exception as e:
-            logger.warning(f"FalkorDB create_conflict link fallback: {e}")
+            logger.error(f"Error creating conflict in FalkorDB: {e}")
 
         return conflict_obj
 
     def list_conflicts(self) -> List[Dict[str, Any]]:
-        # Read from FalkorDB first if possible
         try:
             q = """
             MATCH (c:Conflict)
@@ -277,44 +426,89 @@ class GraphService:
             res = self.get_graph().query(q)
             results = []
             for r in res.result_set:
-                cid = r[0]
+                cid = str(r[0])
                 if cid in _in_memory_conflicts:
                     results.append(_in_memory_conflicts[cid])
                 else:
                     results.append({
                         "id": cid,
-                        "reason": r[1],
-                        "status": r[2],
+                        "reason": str(r[1]),
+                        "status": str(r[2]),
                         "a": {"id": "m1", "text": "Historical decision", "type": "fact", "source": "history", "session_id": "prev", "created_at": datetime.utcnow().isoformat(), "confidence": 1.0},
                         "b": {"id": "m2", "text": "Conflicting decision", "type": "fact", "source": "current", "session_id": "curr", "created_at": datetime.utcnow().isoformat(), "confidence": 0.9}
                     })
             if results:
                 return results
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error listing conflicts: {e}")
         return list(_in_memory_conflicts.values())
 
     def resolve_conflict(self, conflict_id: str, resolution: str, note: Optional[str] = None) -> Dict[str, Any]:
-        if conflict_id in _in_memory_conflicts:
-            _in_memory_conflicts[conflict_id]["status"] = "resolved"
-            conf = _in_memory_conflicts[conflict_id]
-        else:
-            conf = {
-                "id": conflict_id,
-                "reason": "Resolved contradiction",
-                "status": "resolved",
-                "a": {"id": "m1", "text": "Resolved A", "type": "fact", "source": "user", "session_id": "prev", "created_at": datetime.utcnow().isoformat(), "confidence": 1.0},
-                "b": {"id": "m2", "text": "Resolved B", "type": "fact", "source": "user", "session_id": "curr", "created_at": datetime.utcnow().isoformat(), "confidence": 1.0}
-            }
+        now = datetime.utcnow().isoformat()
+        conf = _in_memory_conflicts.get(conflict_id, {
+            "id": conflict_id,
+            "reason": "Architectural contradiction",
+            "status": "resolved",
+            "resolution": resolution,
+            "note": note or "",
+            "resolved_at": now
+        })
+        conf["status"] = "resolved"
+        conf["resolution"] = resolution
+        conf["note"] = note or ""
+        conf["resolved_at"] = now
+        _in_memory_conflicts[conflict_id] = conf
 
         try:
+            g = self.get_graph()
+            # 1. Update conflict node
             q = """
             MATCH (c:Conflict {id: $cid})
-            SET c.status = 'resolved', c.resolution = $res, c.note = $note
+            SET c.status = 'resolved', c.resolution = $res, c.note = $note, c.resolved_at = $now
+            RETURN c.id, c.status
             """
-            self.get_graph().query(q, params={"cid": conflict_id, "res": resolution, "note": note or ""})
-        except Exception:
-            pass
+            g.query(q, params={"cid": conflict_id, "res": resolution, "note": note or "", "now": now})
+
+            # 2. Get memories involved
+            q_mems = """
+            MATCH (c:Conflict {id: $cid})-[:INVOLVES]->(m:Memory)
+            RETURN m.id
+            """
+            involved = [str(r[0]) for r in g.query(q_mems, params={"cid": conflict_id}).result_set]
+
+            mem_a_id = conf.get("a", {}).get("id")
+            mem_b_id = conf.get("b", {}).get("id")
+            if not involved and mem_a_id and mem_b_id:
+                involved = [mem_a_id, mem_b_id]
+
+            if len(involved) >= 2:
+                id_a = involved[0]
+                id_b = involved[1]
+
+                # 3. Delete CONTRADICTS edges between them
+                q_del = """
+                MATCH (ma:Memory {id: $ida})-[r:CONTRADICTS]-(mb:Memory {id: $idb})
+                DELETE r
+                """
+                g.query(q_del, params={"ida": id_a, "idb": id_b})
+
+                # 4. Create SUPERSEDES relationship
+                if resolution == "accept_b":
+                    q_sup = """
+                    MATCH (ma:Memory {id: $ida}), (mb:Memory {id: $idb})
+                    MERGE (mb)-[:SUPERSEDES]->(ma)
+                    SET ma.status = 'superseded'
+                    """
+                    g.query(q_sup, params={"ida": id_a, "idb": id_b})
+                elif resolution == "accept_a":
+                    q_sup = """
+                    MATCH (ma:Memory {id: $ida}), (mb:Memory {id: $idb})
+                    MERGE (ma)-[:SUPERSEDES]->(mb)
+                    SET mb.status = 'superseded'
+                    """
+                    g.query(q_sup, params={"ida": id_a, "idb": id_b})
+        except Exception as e:
+            logger.error(f"Error resolving conflict in FalkorDB: {e}")
 
         return conf
 
@@ -332,6 +526,8 @@ class GraphService:
             sq = "MATCH (s:Session) RETURN s.id, s.title"
             for r in g.query(sq).result_set:
                 sid = str(r[0])
+                if session_id and sid != session_id:
+                    continue
                 if sid not in node_ids:
                     node_ids.add(sid)
                     nodes.append({"id": sid, "type": "Session", "label": r[1] or f"Session {sid}", "data": {}})
@@ -344,16 +540,20 @@ class GraphService:
                     nodes.append({"id": aid, "type": "Agent", "label": agent, "data": {}})
 
             # 3. Memories
-            mq = "MATCH (m:Memory) RETURN m.id, m.text, m.type, m.session_id, m.agent"
-            for r in g.query(mq).result_set:
+            if session_id:
+                mq = "MATCH (m:Memory) WHERE m.session_id = $sid RETURN m.id, m.text, m.type, m.session_id, m.agent"
+                m_res = g.query(mq, params={"sid": session_id}).result_set
+            else:
+                mq = "MATCH (m:Memory) RETURN m.id, m.text, m.type, m.session_id, m.agent"
+                m_res = g.query(mq).result_set
+
+            for r in m_res:
                 mid = str(r[0])
                 if mid not in node_ids:
                     node_ids.add(mid)
                     nodes.append({"id": mid, "type": "Memory", "label": r[1], "data": {"type": r[2], "agent": r[4]}})
-                    # Session -> Memory
-                    if r[3]:
+                    if r[3] and str(r[3]) in node_ids:
                         edges.append({"id": f"e_s_{mid}", "source": str(r[3]), "target": mid, "label": "CONTAINS"})
-                    # Agent -> Memory
                     if r[4]:
                         edges.append({"id": f"e_a_{mid}", "source": f"agent_{str(r[4]).lower()}", "target": mid, "label": "CREATED"})
 
@@ -363,11 +563,14 @@ class GraphService:
                 if cid not in node_ids:
                     node_ids.add(cid)
                     nodes.append({"id": cid, "type": "Conflict", "label": c["reason"], "data": {"status": c["status"]}})
-                    edges.append({"id": f"e_{cid}_a", "source": cid, "target": c["a"]["id"], "label": "INVOLVES"})
-                    edges.append({"id": f"e_{cid}_b", "source": cid, "target": c["b"]["id"], "label": "INVOLVES"})
-                    edges.append({"id": f"e_contra_{cid}", "source": c["a"]["id"], "target": c["b"]["id"], "label": "CONTRADICTS"})
+                    if "a" in c and "id" in c["a"] and c["a"]["id"] in node_ids:
+                        edges.append({"id": f"e_{cid}_a", "source": cid, "target": c["a"]["id"], "label": "INVOLVES"})
+                    if "b" in c and "id" in c["b"] and c["b"]["id"] in node_ids:
+                        edges.append({"id": f"e_{cid}_b", "source": cid, "target": c["b"]["id"], "label": "INVOLVES"})
+                    if c.get("status") == "open" and "a" in c and "b" in c and "id" in c["a"] and "id" in c["b"] and c["a"]["id"] in node_ids and c["b"]["id"] in node_ids:
+                        edges.append({"id": f"e_contra_{cid}", "source": c["a"]["id"], "target": c["b"]["id"], "label": "CONTRADICTS"})
 
-            # 5. Edges from FalkorDB
+            # 5. Graph Relationships directly from FalkorDB
             eq = "MATCH (a)-[r]->(b) RETURN a.id, b.id, type(r)"
             for r in g.query(eq).result_set:
                 src, tgt, lbl = str(r[0]), str(r[1]), str(r[2])
@@ -375,9 +578,31 @@ class GraphService:
                     edges.append({"id": f"e_{src}_{tgt}_{lbl}", "source": src, "target": tgt, "label": lbl})
 
         except Exception as e:
-            logger.warning(f"FalkorDB get_full_graph fallback: {e}")
+            logger.error(f"Error fetching graph: {e}")
+            for sid, sess in _in_memory_sessions.items():
+                if session_id and sid != session_id:
+                    continue
+                if sid not in node_ids:
+                    node_ids.add(sid)
+                    nodes.append({"id": sid, "type": "Session", "label": sess.get("title", f"Session {sid}"), "data": {}})
 
-        # Ensure at least agents exist so GraphExplorer isn't empty
+            for agent in ["Researcher", "Planner", "Reviewer"]:
+                aid = f"agent_{agent.lower()}"
+                if aid not in node_ids:
+                    node_ids.add(aid)
+                    nodes.append({"id": aid, "type": "Agent", "label": agent, "data": {}})
+
+            for mid, m in _in_memory_memories.items():
+                if session_id and m.get("session_id") != session_id:
+                    continue
+                if mid not in node_ids:
+                    node_ids.add(mid)
+                    nodes.append({"id": mid, "type": "Memory", "label": m["text"], "data": {"type": m.get("type", "fact"), "agent": m.get("agent", "Researcher")}})
+                    if m.get("session_id") and m.get("session_id") in node_ids:
+                        edges.append({"id": f"e_s_{mid}", "source": m["session_id"], "target": mid, "label": "CONTAINS"})
+                    if m.get("agent"):
+                        edges.append({"id": f"e_a_{mid}", "source": f"agent_{m['agent'].lower()}", "target": mid, "label": "CREATED"})
+
         if not nodes:
             for a in ["Researcher", "Planner", "Reviewer"]:
                 nodes.append({"id": f"agent_{a.lower()}", "type": "Agent", "label": a, "data": {}})

@@ -4,8 +4,8 @@ import { ArrowUp, Loader2, Search, ClipboardList, ShieldCheck } from "lucide-rea
 
 const ICON: Record<AgentName, typeof Search> = { Researcher: Search, Planner: ClipboardList, Reviewer: ShieldCheck };
 
-export function Workspace({ messages, sending, onSend, onEvidence }: {
-  messages: ChatMessage[]; sending: boolean; onSend: (t: string) => void; onEvidence: (ids: string[]) => void;
+export function Workspace({ messages, sending, onSend, onEvidence, sessionTitle }: {
+  messages: ChatMessage[]; sending: boolean; onSend: (t: string) => void; onEvidence: (ids: string[]) => void; sessionTitle?: string | undefined;
 }) {
   const [text, setText] = useState("");
   const end = useRef<HTMLDivElement>(null);
@@ -16,7 +16,13 @@ export function Workspace({ messages, sending, onSend, onEvidence }: {
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-10">
         {messages.length === 0 && !sending ? (
-          <div className="mx-auto mt-[12vh] max-w-xl text-center">
+          <div className="mx-auto mt-[10vh] max-w-xl text-center">
+            {sessionTitle && (
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3.5 py-1 font-mono text-xs text-primary">
+                <span className="size-2 rounded-full bg-primary animate-pulse" />
+                <span>Active: {sessionTitle}</span>
+              </div>
+            )}
             <h1 className="font-display text-5xl leading-[1.05] md:text-6xl">Memory that <em className="text-primary">outlives</em> the session.</h1>
             <p className="mt-4 text-muted-foreground">Ask anything. Researcher, Planner and Reviewer recall what earlier sessions learned — and flag what contradicts.</p>
             <div className="mt-6 flex flex-wrap justify-center gap-2">

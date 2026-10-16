@@ -15,6 +15,8 @@ class AgentOrchestrator:
         self.llm = get_llm_provider()
 
     def process_chat(self, message: str, session_id: str, project_id: str = "default_project") -> Dict[str, Any]:
+        # Always pick up active configured LLM provider
+        self.llm = get_llm_provider()
         now = datetime.utcnow().isoformat()
         user_msg_id = f"msg_{uuid.uuid4().hex[:6]}"
         assistant_msg_id = f"msg_{uuid.uuid4().hex[:6]}"
@@ -32,7 +34,7 @@ class AgentOrchestrator:
         evidence_list = []
         retrieved_ids = []
 
-        # 1. Researcher Step
+        # 1. Researcher Step (Memory Extraction)
         candidates = researcher_agent.process(message)
         steps.append({
             "agent": "Researcher",
@@ -86,7 +88,17 @@ class AgentOrchestrator:
         all_memories = graph_service.search_memories()
         related_memories = [m for m in all_memories if m["id"] not in created_ids]
 
-        for m in related_memories[:3]:
+        # Find most relevant memories (keyword/semantic overlap)
+        words = set(message.lower().split())
+        scored = []
+        for m in related_memories:
+            m_words = set(m.get("text", "").lower().split())
+            score = len(words & m_words)
+            scored.append((score, m))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        relevant_memories = [m for _, m in scored[:4]] if scored else related_memories[:4]
+
+        for m in relevant_memories:
             retrieved_ids.append(m["id"])
             evidence_list.append({
                 "memory_id": m["id"],
@@ -100,13 +112,31 @@ class AgentOrchestrator:
             "output": f"Recalled {len(evidence_list)} historical facts from FalkorDB graph."
         })
 
-        # 4. Synthesize Answer
+        # 4. LLM Synthesis
+        conflicts_for_synth = []
         if conflict_detected:
-            content = f"I recorded your update, but detected an architectural conflict with an earlier decision:\n\n• {conflict_detected['reason']}\n\nBoth facts are preserved in FalkorDB with a CONTRADICTS link. You can review and resolve this in the Contradictions panel."
-        elif evidence_list:
-            content = f"Based on cross-session context stored in FalkorDB, I verified your statement alongside historical decisions:\n\n" + "\n".join([f"• [{e['memory_id']}] {e['text']}" for e in evidence_list])
-        else:
-            content = f"Noted. I've committed this knowledge to the FalkorDB graph under session {session_id}."
+            conflicts_for_synth.append({
+                "explanation": conflict_detected.get("reason"),
+                "conflict_id": conflict_detected.get("id")
+            })
+
+        tasks = self.llm.plan_tasks(message, relevant_memories)
+
+        synth_result = self.llm.synthesize_response(
+            message=message,
+            retrieved_memories=relevant_memories,
+            conflicts=conflicts_for_synth,
+            tasks=tasks
+        )
+
+        content = synth_result.get("response", "")
+        if not content:
+            if conflict_detected:
+                content = f"I've recorded your update, but flagged an architectural conflict with an earlier decision:\n\n• {conflict_detected['reason']}\n\nBoth facts are preserved in FalkorDB with a CONTRADICTS link."
+            elif evidence_list:
+                content = f"Based on cross-session context in FalkorDB:\n\n" + "\n".join([f"• [{e['memory_id']}] {e['text']}" for e in evidence_list])
+            else:
+                content = f"Noted. I've committed this knowledge to the FalkorDB graph under session {session_id}."
 
         assistant_message = {
             "id": assistant_msg_id,
@@ -115,12 +145,21 @@ class AgentOrchestrator:
             "created_at": datetime.utcnow().isoformat(),
             "evidence": evidence_list,
             "steps": steps,
-            "provider": "live",
+            "provider": "live" if "Gemini" in getattr(self.llm, "provider_name", "") else "deterministic",
             "retrieved_memory_ids": retrieved_ids
         }
 
         # Save assistant message
         graph_service.save_message(session_id, assistant_message)
+
+        # Update session title if it's currently a generic name
+        sessions = graph_service.list_sessions(project_id)
+        curr_session = next((s for s in sessions if s["id"] == session_id), None)
+        if curr_session and (curr_session.get("title", "").startswith("Session ") or curr_session.get("title", "").startswith("sess_")):
+            clean_title = message.strip()
+            if len(clean_title) > 35:
+                clean_title = clean_title[:32] + "..."
+            graph_service.update_session_title(session_id, clean_title)
 
         return {
             "session_id": session_id,

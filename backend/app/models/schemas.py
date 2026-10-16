@@ -13,6 +13,9 @@ class SessionCreate(BaseModel):
     title: Optional[str] = None
     project_id: str = "default_project"
 
+class SessionUpdate(BaseModel):
+    title: str
+
 class SessionResponse(BaseModel):
     id: str
     title: str
